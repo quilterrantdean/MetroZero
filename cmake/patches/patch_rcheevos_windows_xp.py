@@ -35,6 +35,7 @@ required_sources = (
     ROOT / "src/rc_compat.h",
     ROOT / "src/rc_compat.c",
     ROOT / "src/rc_client.c",
+    ROOT / "src/rhash/hash.c",
 )
 missing = [str(path.relative_to(ROOT)) for path in required_sources if not path.is_file()]
 if missing:
@@ -68,6 +69,18 @@ replace_exact(
     "#ifdef __STDC_SECURE_LIB__",
     secure_enabled,
     1,
+)
+replace_exact(
+    ROOT / "src/rhash/hash.c",
+    "#ifdef __STDC_SECURE_LIB__",
+    secure_enabled,
+    1,
+)
+replace_exact(
+    ROOT / "src/rhash/hash.c",
+    "#if defined(__STDC_SECURE_LIB__)",
+    secure_enabled,
+    2,
 )
 # Do not silently leave a secure-CRT branch in another source file when the
 # pinned dependency is updated.
