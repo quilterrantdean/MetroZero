@@ -74,6 +74,7 @@ jobs:
             -DSDL_SSE4_1=OFF -DSDL_SSE4_2=OFF \
             -DSDL_RENDER_D3D11=OFF -DSDL_RENDER_D3D12=OFF \
             -DSDL_RENDER_GPU=OFF -DSDL_VULKAN=OFF \
+            -DSDL_WASAPI=OFF -DSDL_CAMERA=OFF -DSDL_SENSOR=OFF \
             -DHAVE_DXGI1_6_H:INTERNAL= \
             -DHAVE_SHELLSCALINGAPI_H:INTERNAL= \
             -DZLIB_INCLUDE_DIR="$GITHUB_WORKSPACE/.deps/zlib-install/include" \
