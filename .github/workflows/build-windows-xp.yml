@@ -96,21 +96,32 @@ jobs:
           fi
 
           member="libwinpthread_la-misc.o"
-          if ! i686-w64-mingw32-ar t "$archive" | grep -Fxq "$member"; then
-            echo "::error::Could not locate $member in libwinpthread.a."
-            i686-w64-mingw32-ar t "$archive"
+          lib_dir="$(dirname "$archive")"
+          patched_archives=0
+          # The MinGW POSIX runtime ships both libwinpthread.a and its libpthread.a
+          # compatibility copy. The GCC -pthread driver may select either archive.
+          for candidate in "$lib_dir/libwinpthread.a" "$lib_dir/libpthread.a"; do
+            if [ ! -f "$candidate" ]; then
+              continue
+            fi
+            if ! i686-w64-mingw32-ar t "$candidate" | grep -Fxq "$member"; then
+              continue
+            fi
+            echo "Replacing $member in $candidate"
+            sudo i686-w64-mingw32-ar d "$candidate" "$member"
+            sudo i686-w64-mingw32-ar r "$candidate" "$work/misc.o"
+            sudo i686-w64-mingw32-ranlib "$candidate"
+            if i686-w64-mingw32-nm -A -u "$candidate" | grep -q 'GetTickCount64'; then
+              echo "::error::The patched archive still references GetTickCount64: $candidate"
+              exit 1
+            fi
+            patched_archives=$((patched_archives + 1))
+          done
+          if [ "$patched_archives" -eq 0 ]; then
+            echo "::error::No static winpthreads archive was patched."
             exit 1
           fi
-          echo "Replacing archive member: $member"
-          sudo i686-w64-mingw32-ar d "$archive" "$member"
-          sudo i686-w64-mingw32-ar r "$archive" "$work/misc.o"
-          sudo i686-w64-mingw32-ranlib "$archive"
-
-          if i686-w64-mingw32-nm -A -u "$archive" | grep -q 'GetTickCount64'; then
-            echo "::error::The patched static winpthreads archive still references GetTickCount64."
-            exit 1
-          fi
-          echo "Static winpthreads rebuilt for Windows XP: $archive"
+          echo "Patched $patched_archives static pthread archive(s) for Windows XP."
 
       - name: Verify MinGW POSIX threading and static runtime
         run: |
