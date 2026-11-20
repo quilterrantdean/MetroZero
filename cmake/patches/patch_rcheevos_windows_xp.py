@@ -29,8 +29,17 @@ if len(sys.argv) != 2:
     raise SystemExit(f"usage: {Path(sys.argv[0]).name} RCHEEVOS_SOURCE_DIR")
 
 ROOT = Path(sys.argv[1]).resolve()
-if not (ROOT / "CMakeLists.txt").is_file():
-    raise SystemExit(f"Not an rcheevos source directory: {ROOT}")
+required_sources = (
+    ROOT / "src/util/rc_compat.h",
+    ROOT / "src/util/rc_compat.c",
+    ROOT / "src/client/rc_client.c",
+    ROOT / "src/hash/rc_hash.c",
+)
+missing = [str(path.relative_to(ROOT)) for path in required_sources if not path.is_file()]
+if missing:
+    raise SystemExit(
+        f"Not the expected rcheevos source tree at {ROOT}; missing: {', '.join(missing)}"
+    )
 
 secure_enabled = "#if defined(__STDC_SECURE_LIB__) && !defined(RC_NO_SECURE_CRT)"
 secure_disabled = "#if !defined(__STDC_SECURE_LIB__) || defined(RC_NO_SECURE_CRT)"
