@@ -21,12 +21,12 @@ diff --git a/src/video/windows/SDL_windowsvideo.c b/src/video/windows/SDL_window
 diff --git a/src/video/windows/SDL_windowsevents.c b/src/video/windows/SDL_windowsevents.c
 --- a/src/video/windows/SDL_windowsevents.c
 +++ b/src/video/windows/SDL_windowsevents.c
-@@ -1282,3 +1282,5 @@
+@@ -1282,3 +1282,4 @@
      } break;
  
 +#if defined(_WIN32_WINNT) && (_WIN32_WINNT >= 0x0602)
      case WM_POINTERENTER:
-@@ -1399,4 +1400,6 @@
+@@ -1399,4 +1400,5 @@
          returnCode = 0;
      } break;
 +#endif
