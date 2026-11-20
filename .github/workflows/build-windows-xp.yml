@@ -1,0 +1,153 @@
+name: Build Windows XP (x86, Pentium 4 Prescott)
+
+on:
+  # Kept manual so XP-specific cross-builds do not run on every documentation or source commit.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-xp:
+    name: Windows XP SP3 (x86, Pentium 4 Prescott)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/cache@v5
+        with:
+          path: .deps
+          key: metrozero-xp-deps-gcc13-zlib131-sdl3226-${{ hashFiles('CMakeLists.txt', 'cmake/mingw32-xp-prescott.cmake') }}
+
+      - name: Install MinGW-w64 cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build \
+            gcc-mingw-w64-i686-win32 g++-mingw-w64-i686-win32 \
+            binutils-mingw-w64-i686
+          i686-w64-mingw32-gcc-win32 --version
+          i686-w64-mingw32-g++-win32 --version
+          i686-w64-mingw32-g++-win32 -march=prescott -Q --help=target 2>&1 | grep -E '^[[:space:]]*-msse3[[:space:]]+\[enabled\]'
+
+      - name: Build native icon generator
+        run: |
+          mkdir -p .deps/host-tools
+          g++ -std=c++20 -O2 tools/metrozero_icon/main.cpp -o .deps/host-tools/metrozero_icon
+
+      - name: Build static zlib for Win32
+        run: |
+          if [ ! -d .deps/zlib-src ]; then
+            git clone --depth 1 --branch v1.3.1 https://github.com/madler/zlib.git .deps/zlib-src
+          fi
+          cmake -S .deps/zlib-src -B .deps/zlib-build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/cmake/mingw32-xp-prescott.cmake" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DZLIB_BUILD_SHARED=OFF -DZLIB_BUILD_STATIC=ON -DZLIB_BUILD_EXAMPLES=OFF \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/.deps/zlib-install"
+          cmake --build .deps/zlib-build --parallel 2
+          cmake --install .deps/zlib-build
+          test -f .deps/zlib-install/include/zlib.h
+          test -f .deps/zlib-install/lib/libz.a
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/cmake/mingw32-xp-prescott.cmake" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFETCHCONTENT_BASE_DIR="$GITHUB_WORKSPACE/.deps/fetchcontent" \
+            -DMETROZERO_HOST_ICON_TOOL="$GITHUB_WORKSPACE/.deps/host-tools/metrozero_icon" \
+            -DMETROZERO_VENDOR_SDL=ON \
+            -DMETROZERO_BUILD_TOOLS=OFF \
+            -DMETROZERO_BUILD_TESTS=ON \
+            -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST_LIBRARY=OFF \
+            -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF \
+            -DZLIB_INCLUDE_DIR="$GITHUB_WORKSPACE/.deps/zlib-install/include" \
+            -DZLIB_LIBRARY_RELEASE="$GITHUB_WORKSPACE/.deps/zlib-install/lib/libz.a" \
+            -DZLIB_LIBRARY_DEBUG="$GITHUB_WORKSPACE/.deps/zlib-install/lib/libz.a" \
+            -DZLIB_USE_STATIC_LIBS=ON
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Verify XP executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe="build/MetroZero.exe"
+          test -s "$exe"
+
+          pe_file="$(i686-w64-mingw32-objdump -f "$exe")"
+          echo "$pe_file"
+          grep -q 'pei-i386' <<<"$pe_file"
+
+          pe_info="$(i686-w64-mingw32-objdump -p "$exe")"
+          grep -E 'Subsystem|MajorSubsystemVersion|MinorSubsystemVersion' <<<"$pe_info"
+          grep -Eq 'Subsystem[[:space:]]+00000002 \(Windows GUI\)' <<<"$pe_info"
+          grep -Eq 'MajorSubsystemVersion[[:space:]]+5([[:space:]]|$)' <<<"$pe_info"
+          grep -Eq 'MinorSubsystemVersion[[:space:]]+1([[:space:]]|$)' <<<"$pe_info"
+
+          python3 - "$exe" <<'PY'
+          import re
+          import subprocess
+          import sys
+
+          exe = sys.argv[1]
+          data = subprocess.check_output(
+              ["i686-w64-mingw32-objdump", "-p", exe], text=True, errors="replace"
+          )
+
+          # These imports are not available on Windows XP (Vista or later).
+          xp_incompatible = (
+              "SHGetKnownFolderPath",
+              "GetTickCount64",
+              "InitializeCriticalSectionEx",
+              "GetFinalPathNameByHandleW",
+              "GetFileInformationByHandleEx",
+              "CancelIoEx",
+              "GetQueuedCompletionStatusEx",
+              "SetThreadErrorMode",
+              "CreateSymbolicLinkW",
+              "GetSystemTimePreciseAsFileTime",
+              "GetActiveProcessorCount",
+              "GetLogicalProcessorInformationEx",
+              "GetUserDefaultLocaleName",
+              "GetLocaleInfoEx",
+              "RegGetValueW",
+              "GetThreadId",
+          )
+          found = [name for name in xp_incompatible if re.search(r"\b" + re.escape(name) + r"\b", data)]
+          if found:
+              print("Windows XP-incompatible imports detected:", ", ".join(found))
+              sys.exit(1)
+
+          # The executable must not require MinGW, SDL or zlib DLLs at runtime.
+          dlls = re.findall(r"^\s*DLL Name: (.+)$", data, flags=re.MULTILINE)
+          runtime_dlls = [
+              dll for dll in dlls
+              if re.search(r"(libstdc\+\+|libgcc|libwinpthread|libatomic|libssp|SDL3|zlib1|ucrtbase|vcruntime|msvcp)", dll, re.I)
+          ]
+          if runtime_dlls:
+              print("Non-system runtime DLL imports detected:", ", ".join(runtime_dlls))
+              sys.exit(1)
+
+          print("PE32 / XP subsystem / import checks passed.")
+          PY
+
+      - name: Package
+        run: |
+          version="$(sed -n 's/^project(metrozero LANGUAGES C CXX VERSION \([0-9.]*\)).*/\1/p' CMakeLists.txt)"
+          test -n "$version"
+          mkdir -p dist
+          cp build/MetroZero.exe "dist/MetroZero-${version}-Windows-XP-x86-Prescott.exe"
+          sha256sum dist/MetroZero-*.exe | tee dist/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: MetroZero-Windows-XP-x86-Prescott
+          path: |
+            dist/MetroZero-*-Windows-XP-x86-Prescott.exe
+            dist/SHA256SUMS.txt
+          if-no-files-found: error

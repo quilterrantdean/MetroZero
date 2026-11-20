@@ -42,12 +42,12 @@ constexpr const char* kLegacyShortcutName = game::kFileSafeTitle;
 // Marker in the .lnk description so MetroZero recognizes its own shortcut.
 constexpr const wchar_t* kLnkMarker = L"(MetroZero shortcut)";
 
-fs::path known_folder(REFKNOWNFOLDERID id) {
-    PWSTR p = nullptr;
-    fs::path out;
-    if (SUCCEEDED(SHGetKnownFolderPath(id, 0, nullptr, &p))) out = fs::path(p);
-    CoTaskMemFree(p);
-    return out;
+// SHGetKnownFolderPath is Vista+; SHGetFolderPathW is available on Windows XP.
+fs::path known_folder(int csidl) {
+    wchar_t path[MAX_PATH] = {};
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, csidl, nullptr, SHGFP_TYPE_CURRENT, path)))
+        return fs::path(path);
+    return {};
 }
 
 struct ComInit {
@@ -198,7 +198,7 @@ fs::path shortcut_path_named(ShortcutPlace place, const char* name) {
     fs::path dir = home_dir() / (place == ShortcutPlace::Desktop ? "Desktop" : "Applications");
     return dir / (std::string(name) + ".app");
 #elif defined(_WIN32)
-    fs::path dir = known_folder(place == ShortcutPlace::Desktop ? FOLDERID_Desktop : FOLDERID_Programs);
+    fs::path dir = known_folder(place == ShortcutPlace::Desktop ? CSIDL_DESKTOPDIRECTORY : CSIDL_PROGRAMS);
     return dir.empty() ? fs::path() : dir / (std::string(name) + ".lnk");
 #else
     (void)name;  // the .desktop file name never changed; only its Name= line did

@@ -24,7 +24,21 @@ option(METROZERO_PACKAGE "Add packaging targets (Windows zip, Linux AppDir insta
 
 # App icon renderer (original procedural artwork); used for the macOS .icns, Windows .ico and
 # the Linux icon.
-add_executable(metrozero_icon tools/metrozero_icon/main.cpp)
+# Icon rendering is a build-host tool: during cross-compilation it must run on the host,
+# not on the Windows target. Build it natively and pass METROZERO_HOST_ICON_TOOL.
+set(METROZERO_HOST_ICON_TOOL "" CACHE FILEPATH "Native host executable for tools/metrozero_icon")
+if(CMAKE_CROSSCOMPILING)
+    if(NOT METROZERO_HOST_ICON_TOOL OR NOT EXISTS "${METROZERO_HOST_ICON_TOOL}")
+        message(FATAL_ERROR
+            "Cross-compiling requires METROZERO_HOST_ICON_TOOL to point to a native metrozero_icon executable")
+    endif()
+    set(METROZERO_ICON_COMMAND "${METROZERO_HOST_ICON_TOOL}")
+    set(METROZERO_ICON_DEPENDS "${METROZERO_HOST_ICON_TOOL}")
+else()
+    add_executable(metrozero_icon tools/metrozero_icon/main.cpp)
+    set(METROZERO_ICON_COMMAND "$<TARGET_FILE:metrozero_icon>")
+    set(METROZERO_ICON_DEPENDS ${METROZERO_ICON_DEPENDS})
+endif()
 
 # Core: ROM loading and verification. No SDL dependency, so it can be tested headless.
 add_library(metrozero_core STATIC
@@ -209,10 +223,10 @@ if(TARGET SDL3::SDL3)
     set(icon_png "${CMAKE_CURRENT_BINARY_DIR}/metrozero-icon-512.png")
     set(out "${CMAKE_CURRENT_BINARY_DIR}/image_icon.cpp")
     add_custom_command(OUTPUT "${out}"
-        COMMAND metrozero_icon --png 512 "${icon_png}"
+        COMMAND "${METROZERO_ICON_COMMAND}" --png 512 "${icon_png}"
         COMMAND "${CMAKE_COMMAND}" -DINPUT=${icon_png} -DOUTPUT=${out}
                 -DSYMBOL=metrozero_image_icon -P ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
-        DEPENDS metrozero_icon cmake/embed.cmake
+        DEPENDS ${METROZERO_ICON_DEPENDS} cmake/embed.cmake
         COMMENT "Embedding the MetroZero app icon")
     list(APPEND metrozero_font_cpp "${out}")
     # License texts compiled in (shown in F1 > About and by --licenses).
@@ -272,7 +286,7 @@ if(TARGET SDL3::SDL3)
     if(WIN32)
         # GUI program (no console window), MetroZero.exe with the app icon and version info.
         set(metrozero_ico "${CMAKE_CURRENT_BINARY_DIR}/metrozero.ico")
-        add_custom_command(OUTPUT "${metrozero_ico}" COMMAND metrozero_icon --ico "${metrozero_ico}" DEPENDS metrozero_icon
+        add_custom_command(OUTPUT "${metrozero_ico}" COMMAND "${METROZERO_ICON_COMMAND}" --ico "${metrozero_ico}" DEPENDS ${METROZERO_ICON_DEPENDS}
                            COMMENT "Rendering metrozero.ico")
         configure_file(packaging/windows/metrozero.rc.in "${CMAKE_CURRENT_BINARY_DIR}/metrozero.rc" @ONLY)
         target_sources(metrozero PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/metrozero.rc" "${metrozero_ico}")
@@ -311,7 +325,7 @@ if(TARGET SDL3::SDL3)
         # ALSA/PulseAudio/PipeWire at runtime. Installed into an AppDir by the workflow.
         target_link_options(metrozero PRIVATE -static-libstdc++ -static-libgcc)
         set(metrozero_png "${CMAKE_CURRENT_BINARY_DIR}/metrozero.png")
-        add_custom_command(OUTPUT "${metrozero_png}" COMMAND metrozero_icon --png 256 "${metrozero_png}" DEPENDS metrozero_icon
+        add_custom_command(OUTPUT "${metrozero_png}" COMMAND "${METROZERO_ICON_COMMAND}" --png 256 "${metrozero_png}" DEPENDS ${METROZERO_ICON_DEPENDS}
                            COMMENT "Rendering metrozero.png")
         add_custom_target(metrozero_linux_icon ALL DEPENDS "${metrozero_png}")
         install(TARGETS metrozero RUNTIME DESTINATION bin)
