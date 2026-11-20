@@ -38,11 +38,11 @@ std::tm local_time(std::time_t t) {
 
 fs::path home_dir() {
 #if defined(_WIN32)
-    PWSTR p = nullptr;
-    fs::path out;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Profile, 0, nullptr, &p))) out = fs::path(p);
-    CoTaskMemFree(p);
-    return out;
+    // SHGetKnownFolderPath is Vista+; SHGetFolderPathW is available on Windows XP.
+    wchar_t path[MAX_PATH] = {};
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_PROFILE, nullptr, SHGFP_TYPE_CURRENT, path)))
+        return fs::path(path);
+    return {};
 #else
     const char* h = std::getenv("HOME");
     return h ? utf8_path(h) : fs::path();

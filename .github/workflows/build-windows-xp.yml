@@ -67,6 +67,10 @@ jobs:
             -DMETROZERO_BUILD_TESTS=ON \
             -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST_LIBRARY=OFF \
             -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF \
+            -DSDL_AVX=OFF -DSDL_AVX2=OFF -DSDL_AVX512F=OFF \
+            -DSDL_SSE4_1=OFF -DSDL_SSE4_2=OFF \
+            -DSDL_RENDER_D3D11=OFF -DSDL_RENDER_D3D12=OFF \
+            -DSDL_RENDER_GPU=OFF -DSDL_VULKAN=OFF \
             -DZLIB_INCLUDE_DIR="$GITHUB_WORKSPACE/.deps/zlib-install/include" \
             -DZLIB_LIBRARY_RELEASE="$GITHUB_WORKSPACE/.deps/zlib-install/lib/libz.a" \
             -DZLIB_LIBRARY_DEBUG="$GITHUB_WORKSPACE/.deps/zlib-install/lib/libz.a" \
