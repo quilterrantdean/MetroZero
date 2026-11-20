@@ -95,10 +95,7 @@ jobs:
           grep -E 'HAVE_DXGI1_6_H|HAVE_SHELLSCALINGAPI_H' "$config"
 
       - name: Patch SDL3 pen-input code for Windows XP
-        run: |
-          sdl_source=".deps/fetchcontent/sdl3-src"
-          git -C "$sdl_source" apply --check "$GITHUB_WORKSPACE/cmake/patches/sdl3-windows-xp.patch"
-          git -C "$sdl_source" apply "$GITHUB_WORKSPACE/cmake/patches/sdl3-windows-xp.patch"
+        run: python3 cmake/patches/patch_sdl3_windows_xp.py .deps/fetchcontent/sdl3-src
 
       - name: Build
         run: cmake --build build --parallel 2
