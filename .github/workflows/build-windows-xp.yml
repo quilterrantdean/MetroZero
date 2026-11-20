@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - windows-xp-pentium4
   workflow_dispatch:
 
 # Keep only the newest XP build; stale runs from older commits are cancelled.
@@ -56,6 +57,45 @@ jobs:
           i686-w64-mingw32-g++-posix --version
           i686-w64-mingw32-g++-posix -march=prescott -Q --help=target 2>&1 | grep -E '^[[:space:]]*-msse3[[:space:]]+\[enabled\]'
 
+      - name: Rebuild static winpthreads with Windows XP API baseline
+        run: |
+          source_dir=".deps/mingw-w64-src/mingw-w64-libraries/winpthreads"
+          if [ ! -f "$source_dir/src/misc.c" ]; then
+            rm -rf .deps/mingw-w64-src
+            git clone --depth 1 --branch v11.0.1 https://github.com/mingw-w64/mingw-w64.git .deps/mingw-w64-src
+          fi
+
+          # Ubuntu's MinGW package builds winpthreads for a newer Windows baseline.
+          # Recompile only misc.o against XP headers: its Vista-only branch imports
+          # GetTickCount64, while its XP branch uses QueryPerformanceCounter/GetTickCount.
+          archive="$(i686-w64-mingw32-gcc-posix -print-file-name=libwinpthread.a)"
+          test -f "$archive"
+          work="$GITHUB_WORKSPACE/.deps/winpthreads-xp"
+          mkdir -p "$work"
+          i686-w64-mingw32-gcc-posix -O2 -Wall -DWIN32_LEAN_AND_MEAN \
+            -D_WIN32_WINNT=0x0501 -DWINVER=0x0501 \
+            -DIN_WINPTHREAD -DWINPTHREAD_DBG=1 -D__USE_MINGW_ANSI_STDIO=0 \
+            -I"$source_dir/include" -I"$source_dir/src" \
+            -march=prescott -mtune=prescott -msse3 \
+            -c "$source_dir/src/misc.c" -o "$work/misc.o"
+
+          if i686-w64-mingw32-nm -u "$work/misc.o" | grep -q 'GetTickCount64'; then
+            echo "::error::The rebuilt winpthreads object still references GetTickCount64."
+            exit 1
+          fi
+
+          member_count="$(i686-w64-mingw32-ar t "$archive" | grep -cx 'misc.o' || true)"
+          test "$member_count" -eq 1
+          i686-w64-mingw32-ar d "$archive" misc.o
+          (cd "$work" && i686-w64-mingw32-ar r "$archive" misc.o)
+          i686-w64-mingw32-ranlib "$archive"
+
+          if i686-w64-mingw32-nm -A -u "$archive" | grep -q 'GetTickCount64'; then
+            echo "::error::The patched static winpthreads archive still references GetTickCount64."
+            exit 1
+          fi
+          echo "Static winpthreads rebuilt for Windows XP: $archive"
+
       - name: Verify MinGW POSIX threading and static runtime
         run: |
           cat > "$RUNNER_TEMP/mingw-thread-test.cpp" <<'EOF'
@@ -83,6 +123,11 @@ jobs:
             exit 1
           fi
           echo "C++ condition_variable/thread smoke test linked without a winpthread DLL."
+          if i686-w64-mingw32-objdump -p "$RUNNER_TEMP/mingw-thread-test.exe" | grep -q 'GetTickCount64'; then
+            echo "::error::The XP threading smoke test still imports GetTickCount64."
+            exit 1
+          fi
+          echo "Threading smoke test has no Vista-only GetTickCount64 import."
 
 
       - name: Build native icon generator
