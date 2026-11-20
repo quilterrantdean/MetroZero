@@ -22,15 +22,31 @@ jobs:
       - uses: actions/cache@v5
         with:
           path: .deps
-          key: metrozero-xp-deps-gcc13-zlib131-sdl3226-${{ hashFiles('CMakeLists.txt', 'cmake/mingw32-xp-prescott.cmake') }}
+          key: metrozero-xp-deps-gcc13-zlib131-sdl3226-${{ hashFiles('CMakeLists.txt', 'cmake/mingw32-xp-prescott.cmake', 'cmake/patches/patch_sdl3_windows_xp.py') }}
+          save-always: true
 
       - name: Install MinGW-w64 cross-compiler
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build \
-            gcc-mingw-w64-i686-win32 g++-mingw-w64-i686-win32 \
-            binutils-mingw-w64-i686
+          # GitHub's Ubuntu runners can temporarily expose only third-party APT sources.
+          # Use the official Ubuntu 24.04 (Noble) mirror, matching the runner image.
+          sudo rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
+          mirror=https://mirrors.edge.kernel.org/ubuntu
+          printf 'deb %s noble main universe\ndeb %s noble-updates main universe\ndeb %s noble-security main universe\n' \
+            "$mirror" "$mirror" "$mirror" | sudo tee /etc/apt/sources.list
+          apt_opts=(-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          installed=false
+          for attempt in 1 2 3; do
+            if sudo apt-get "${apt_opts[@]}" update && sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends \
+              cmake ninja-build gcc-mingw-w64-i686-win32 g++-mingw-w64-i686-win32 \
+              binutils-mingw-w64-i686; then
+              installed=true
+              break
+            fi
+            echo "APT failed (attempt $attempt), retrying in 20 seconds"
+            sleep 20
+          done
+          test "$installed" = true
           i686-w64-mingw32-gcc-win32 --version
           i686-w64-mingw32-g++-win32 --version
           i686-w64-mingw32-g++-win32 -march=prescott -Q --help=target 2>&1 | grep -E '^[[:space:]]*-msse3[[:space:]]+\[enabled\]'
@@ -74,6 +90,7 @@ jobs:
             -DSDL_SSE4_1=OFF -DSDL_SSE4_2=OFF \
             -DSDL_RENDER_D3D11=OFF -DSDL_RENDER_D3D12=OFF \
             -DSDL_RENDER_GPU=OFF -DSDL_VULKAN=OFF \
+            -DSDL_WASAPI=OFF -DSDL_CAMERA=OFF -DSDL_SENSOR=OFF \
             -DHAVE_DXGI1_6_H:INTERNAL= \
             -DHAVE_SHELLSCALINGAPI_H:INTERNAL= \
             -DZLIB_INCLUDE_DIR="$GITHUB_WORKSPACE/.deps/zlib-install/include" \
@@ -92,6 +109,9 @@ jobs:
             exit 1
           fi
           grep -E 'HAVE_DXGI1_6_H|HAVE_SHELLSCALINGAPI_H' "$config"
+
+      - name: Patch SDL3 pen-input code for Windows XP
+        run: python3 cmake/patches/patch_sdl3_windows_xp.py .deps/fetchcontent/sdl3-src
 
       - name: Build
         run: cmake --build build --parallel 2
