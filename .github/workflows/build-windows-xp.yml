@@ -25,12 +25,27 @@ jobs:
           key: metrozero-xp-deps-gcc13-zlib131-sdl3226-${{ hashFiles('CMakeLists.txt', 'cmake/mingw32-xp-prescott.cmake') }}
 
       - name: Install MinGW-w64 cross-compiler
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build \
-            gcc-mingw-w64-i686-win32 g++-mingw-w64-i686-win32 \
-            binutils-mingw-w64-i686
+          # GitHub's Ubuntu runners can temporarily expose only third-party APT sources.
+          # Use the official Ubuntu 24.04 (Noble) mirror, matching the runner image.
+          sudo rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
+          mirror=https://mirrors.edge.kernel.org/ubuntu
+          printf 'deb %s noble main universe\ndeb %s noble-updates main universe\ndeb %s noble-security main universe\n' \
+            "$mirror" "$mirror" "$mirror" | sudo tee /etc/apt/sources.list
+          apt_opts=(-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          installed=false
+          for attempt in 1 2 3; do
+            if sudo apt-get "${apt_opts[@]}" update && sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends \
+              cmake ninja-build gcc-mingw-w64-i686-win32 g++-mingw-w64-i686-win32 \
+              binutils-mingw-w64-i686; then
+              installed=true
+              break
+            fi
+            echo "APT failed (attempt $attempt), retrying in 20 seconds"
+            sleep 20
+          done
+          test "$installed" = true
           i686-w64-mingw32-gcc-win32 --version
           i686-w64-mingw32-g++-win32 --version
           i686-w64-mingw32-g++-win32 -march=prescott -Q --help=target 2>&1 | grep -E '^[[:space:]]*-msse3[[:space:]]+\[enabled\]'
