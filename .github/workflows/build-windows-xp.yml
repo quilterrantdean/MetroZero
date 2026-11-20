@@ -164,9 +164,11 @@ jobs:
 
           pe_info="$(i686-w64-mingw32-objdump -p "$exe")"
           grep -E 'Subsystem|MajorSubsystemVersion|MinorSubsystemVersion' <<<"$pe_info"
-          grep -Eq 'Subsystem[[:space:]]+00000002 \(Windows GUI\)' <<<"$pe_info"
+          echo "Checking PE subsystem: Windows GUI, version 5.1"
+          grep -Eq 'Subsystem[[:space:]]+00000002[[:space:]]+\(Windows GUI\)' <<<"$pe_info"
           grep -Eq 'MajorSubsystemVersion[[:space:]]+5([[:space:]]|$)' <<<"$pe_info"
           grep -Eq 'MinorSubsystemVersion[[:space:]]+1([[:space:]]|$)' <<<"$pe_info"
+          echo "PE machine and Windows XP subsystem checks passed."
 
           python3 - "$exe" <<'PY'
           import re
@@ -204,6 +206,7 @@ jobs:
 
           # The executable must not require MinGW, SDL or zlib DLLs at runtime.
           dlls = re.findall(r"^\s*DLL Name: (.+)$", data, flags=re.MULTILINE)
+          print("Imported DLLs:", ", ".join(dlls) if dlls else "(none)")
           runtime_dlls = [
               dll for dll in dlls
               if re.search(r"(libstdc\+\+|libgcc|libwinpthread|libatomic|libssp|SDL3|zlib1|ucrtbase|vcruntime|msvcp)", dll, re.I)
