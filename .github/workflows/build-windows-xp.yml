@@ -4,8 +4,12 @@ on:
   push:
     branches:
       - main
-      - windows-xp-pentium4
   workflow_dispatch:
+
+# Keep only the newest XP build; stale runs from older commits are cancelled.
+concurrency:
+  group: metrozero-windows-xp
+  cancel-in-progress: true
 
 permissions:
   contents: read
