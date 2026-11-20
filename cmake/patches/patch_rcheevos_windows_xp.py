@@ -58,6 +58,12 @@ replace_exact(
     1,
 )
 replace_exact(
+    ROOT / "src/rc_compat.c",
+    "#ifndef __STDC_SECURE_LIB__",
+    secure_disabled,
+    1,
+)
+replace_exact(
     ROOT / "src/rc_client.c",
     "#ifdef __STDC_SECURE_LIB__",
     secure_enabled,
