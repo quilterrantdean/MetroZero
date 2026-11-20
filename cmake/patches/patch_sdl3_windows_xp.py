@@ -59,6 +59,19 @@ def main() -> int:
         + end_guard,
     )
 
+    # COPY_FILE_NO_BUFFERING is Vista+ and is unsupported on Windows XP.
+    # Keep the XP-supported decrypted-destination flag and use normal buffered I/O.
+    replace_once(
+        root,
+        "src/filesystem/windows/SDL_sysfsops.c",
+        "    const BOOL rc = CopyFileExW(woldpath, wnewpath, NULL, NULL, NULL, COPY_FILE_ALLOW_DECRYPTED_DESTINATION|COPY_FILE_NO_BUFFERING);\\n",
+        "    DWORD copy_flags = COPY_FILE_ALLOW_DECRYPTED_DESTINATION;\\n"
+        "#if defined(_WIN32_WINNT) && (_WIN32_WINNT >= 0x0600)\\n"
+        "    copy_flags |= COPY_FILE_NO_BUFFERING;\\n"
+        "#endif\\n"
+        "    const BOOL rc = CopyFileExW(woldpath, wnewpath, NULL, NULL, NULL, copy_flags);\\n",
+    )
+
     events_path = root / "src/video/windows/SDL_windowsevents.c"
     events = events_path.read_text(encoding="utf-8")
     pointer_case = "    case WM_POINTERENTER:\n"
