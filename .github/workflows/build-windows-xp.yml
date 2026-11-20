@@ -260,14 +260,14 @@ jobs:
           imports_by_dll = {}
           current_dll = None
           for line in data.splitlines():
-              dll_match = re.match(r"^\\s*DLL Name:\\s*(\\S+)", line)
+              dll_match = re.match(r"^\s*DLL Name:\s*(\S+)", line)
               if dll_match:
                   current_dll = dll_match.group(1).lower()
                   imports_by_dll.setdefault(current_dll, [])
                   continue
               if current_dll is not None:
                   symbol_match = re.match(
-                      r"^\\s*[0-9a-fA-F]+\\s+<none>\\s+[0-9a-fA-F]+\\s+(\\S+)", line
+                      r"^\s*[0-9a-fA-F]+\s+<none>\s+[0-9a-fA-F]+\s+(\S+)", line
                   )
                   if symbol_match:
                       imports_by_dll[current_dll].append(symbol_match.group(1))
