@@ -27,7 +27,7 @@ def replace_once(root: Path, relative: str, old: str, new: str) -> None:
             f"(found original={old_count}, patched={new_count}); "
             "the pinned SDL source may have changed"
         )
-    path.write_text(source, encoding="utf-8", newline="\\n")
+    path.write_text(source, encoding="utf-8", newline="\n")
 
 
 def main() -> int:
@@ -90,13 +90,13 @@ def main() -> int:
         raise SystemExit("SDL_windowsevents.c: matching WM_MOUSEMOVE boundary not found")
     guarded = (
         events[start : start + len(win8_guard)] == win8_guard
-        and events[end - len(end_guard) - 1 : end] == end_guard + "\\n"
+        and events[end - len(end_guard) - 1 : end] == end_guard + "\n"
     )
     if not guarded:
         if win8_guard in events[start:end]:
             raise SystemExit("SDL_windowsevents.c: partial or unexpected pointer-event guard")
-        events = events[:start] + win8_guard + events[start:end] + end_guard + "\\n" + events[end:]
-        events_path.write_text(events, encoding="utf-8", newline="\\n")
+        events = events[:start] + win8_guard + events[start:end] + end_guard + "\n" + events[end:]
+        events_path.write_text(events, encoding="utf-8", newline="\n")
 
     print("Applied XP guard to SDL Windows 8 pointer-pen code.")
     return 0
