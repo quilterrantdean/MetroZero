@@ -102,9 +102,9 @@ jobs:
             exit 1
           fi
           echo "Replacing archive member: $member"
-          i686-w64-mingw32-ar d "$archive" "$member"
-          i686-w64-mingw32-ar r "$archive" "$work/misc.o"
-          i686-w64-mingw32-ranlib "$archive"
+          sudo i686-w64-mingw32-ar d "$archive" "$member"
+          sudo i686-w64-mingw32-ar r "$archive" "$work/misc.o"
+          sudo i686-w64-mingw32-ranlib "$archive"
 
           if i686-w64-mingw32-nm -A -u "$archive" | grep -q 'GetTickCount64'; then
             echo "::error::The patched static winpthreads archive still references GetTickCount64."
