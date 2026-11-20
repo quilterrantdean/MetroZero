@@ -45,11 +45,14 @@ jobs:
           cmake -S .deps/zlib-src -B .deps/zlib-build -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/cmake/mingw32-xp-prescott.cmake" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DZLIB_BUILD_SHARED=OFF -DZLIB_BUILD_STATIC=ON -DZLIB_BUILD_EXAMPLES=OFF \
+            -DZLIB_BUILD_EXAMPLES=OFF \
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/.deps/zlib-install"
           cmake --build .deps/zlib-build --parallel 2
           cmake --install .deps/zlib-build
           test -f .deps/zlib-install/include/zlib.h
+          zlib_static="$(find .deps/zlib-install -type f -name 'libzlibstatic.a' -print -quit)"
+          test -n "$zlib_static"
+          cp "$zlib_static" .deps/zlib-install/lib/libz.a
           test -f .deps/zlib-install/lib/libz.a
 
       - name: Configure
