@@ -29,11 +29,12 @@ if len(sys.argv) != 2:
     raise SystemExit(f"usage: {Path(sys.argv[0]).name} RCHEEVOS_SOURCE_DIR")
 
 ROOT = Path(sys.argv[1]).resolve()
+# rcheevos v12.5.0 is pinned by CMakeLists.txt. Its source layout is flat
+# under src/ (the nested util/client/hash layout belongs to a later release).
 required_sources = (
-    ROOT / "src/util/rc_compat.h",
-    ROOT / "src/util/rc_compat.c",
-    ROOT / "src/client/rc_client.c",
-    ROOT / "src/hash/rc_hash.c",
+    ROOT / "src/rc_compat.h",
+    ROOT / "src/rc_compat.c",
+    ROOT / "src/rc_client.c",
 )
 missing = [str(path.relative_to(ROOT)) for path in required_sources if not path.is_file()]
 if missing:
@@ -45,36 +46,23 @@ secure_enabled = "#if defined(__STDC_SECURE_LIB__) && !defined(RC_NO_SECURE_CRT)
 secure_disabled = "#if !defined(__STDC_SECURE_LIB__) || defined(RC_NO_SECURE_CRT)"
 
 replace_exact(
-    ROOT / "src/util/rc_compat.h",
+    ROOT / "src/rc_compat.h",
     "#ifndef __STDC_SECURE_LIB__",
     secure_disabled,
     1,
 )
 replace_exact(
-    ROOT / "src/util/rc_compat.c",
+    ROOT / "src/rc_compat.c",
     "#ifdef __STDC_SECURE_LIB__",
     secure_enabled,
     1,
 )
 replace_exact(
-    ROOT / "src/client/rc_client.c",
+    ROOT / "src/rc_client.c",
     "#ifdef __STDC_SECURE_LIB__",
     secure_enabled,
     1,
 )
-replace_exact(
-    ROOT / "src/hash/rc_hash.c",
-    "#ifdef __STDC_SECURE_LIB__",
-    secure_enabled,
-    1,
-)
-replace_exact(
-    ROOT / "src/hash/rc_hash.c",
-    "#if defined(__STDC_SECURE_LIB__)",
-    secure_enabled,
-    2,
-)
-
 # Do not silently leave a secure-CRT branch in another source file when the
 # pinned dependency is updated.
 unpatched = []
