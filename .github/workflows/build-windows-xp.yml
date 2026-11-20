@@ -220,6 +220,9 @@ jobs:
       - name: Patch SDL3 pen-input code for Windows XP
         run: python3 cmake/patches/patch_sdl3_windows_xp.py .deps/fetchcontent/sdl3-src
 
+      - name: Patch rcheevos secure CRT selection for Windows XP
+        run: python3 cmake/patches/patch_rcheevos_windows_xp.py .deps/fetchcontent/rcheevos-src
+
       - name: Build
         run: cmake --build build --parallel 2
 
@@ -251,6 +254,39 @@ jobs:
           data = subprocess.check_output(
               ["i686-w64-mingw32-objdump", "-p", exe], text=True, errors="replace"
           )
+
+          # Inspect imports by DLL. The MinGW headers advertise Annex K secure CRT
+          # functions even though XP's system msvcrt.dll does not export them.
+          imports_by_dll = {}
+          current_dll = None
+          for line in data.splitlines():
+              dll_match = re.match(r"^\\s*DLL Name:\\s*(\\S+)", line)
+              if dll_match:
+                  current_dll = dll_match.group(1).lower()
+                  imports_by_dll.setdefault(current_dll, [])
+                  continue
+              if current_dll is not None:
+                  symbol_match = re.match(
+                      r"^\\s*[0-9a-fA-F]+\\s+<none>\\s+[0-9a-fA-F]+\\s+(\\S+)", line
+                  )
+                  if symbol_match:
+                      imports_by_dll[current_dll].append(symbol_match.group(1))
+
+          xp_incompatible_crt = {
+              "freopen_s", "_wfreopen_s", "fopen_s", "_wfopen_s",
+              "vsnprintf_s", "_vsnprintf_s", "vsprintf_s", "_vsprintf_s",
+              "sprintf_s", "_sprintf_s", "snprintf_s", "_snprintf_s",
+              "fprintf_s", "vfprintf_s", "printf_s", "vprintf_s",
+              "strcpy_s", "strncpy_s", "strcat_s", "strncat_s",
+              "wcscpy_s", "wcsncpy_s", "wcscat_s", "wcsncat_s",
+              "sscanf_s", "fscanf_s", "scanf_s", "localtime_s", "gmtime_s",
+          }
+          msvcrt_imports = set(imports_by_dll.get("msvcrt.dll", []))
+          bad_crt_imports = sorted(msvcrt_imports & xp_incompatible_crt)
+          print("MSVCRT imports:", ", ".join(sorted(msvcrt_imports)))
+          if bad_crt_imports:
+              print("Windows XP-incompatible MSVCRT imports detected:", ", ".join(bad_crt_imports))
+              sys.exit(1)
 
           # These imports are not available on Windows XP (Vista or later).
           xp_incompatible = (

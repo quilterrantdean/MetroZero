@@ -174,6 +174,12 @@ if(TARGET SDL3::SDL3)
         ${rc}/rhash/md5.c)
     target_include_directories(rcheevos PUBLIC ${rcheevos_SOURCE_DIR}/include ${rc})
     target_include_directories(rcheevos SYSTEM PUBLIC ${stb_SOURCE_DIR})
+    # MinGW advertises the Annex K secure CRT, but the Windows XP MSVCRT does not
+    # export those *_s entry points. The XP workflow patches rcheevos to honour
+    # RC_NO_SECURE_CRT and use its bounded C99/legacy CRT fallbacks instead.
+    if(MINGW)
+        target_compile_definitions(rcheevos PRIVATE RC_NO_SECURE_CRT=1)
+    endif()
     set_target_properties(rcheevos PROPERTIES C_STANDARD 99)
 
     # Options panel (owned by the options work; display.* / input.* settings).
