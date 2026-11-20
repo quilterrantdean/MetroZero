@@ -42,7 +42,7 @@ jobs:
           installed=false
           for attempt in 1 2 3; do
             if sudo apt-get "${apt_opts[@]}" update && sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends \
-              gcc-mingw-w64-i686-win32 g++-mingw-w64-i686-win32 binutils-mingw-w64-i686; then
+              gcc-mingw-w64-i686-posix g++-mingw-w64-i686-posix binutils-mingw-w64-i686; then
               installed=true
               break
             fi
@@ -52,9 +52,38 @@ jobs:
           test "$installed" = true
           cmake --version
           ninja --version
-          i686-w64-mingw32-gcc-win32 --version
-          i686-w64-mingw32-g++-win32 --version
-          i686-w64-mingw32-g++-win32 -march=prescott -Q --help=target 2>&1 | grep -E '^[[:space:]]*-msse3[[:space:]]+\[enabled\]'
+          i686-w64-mingw32-gcc-posix --version
+          i686-w64-mingw32-g++-posix --version
+          i686-w64-mingw32-g++-posix -march=prescott -Q --help=target 2>&1 | grep -E '^[[:space:]]*-msse3[[:space:]]+\[enabled\]'
+
+      - name: Verify MinGW POSIX threading and static runtime
+        run: |
+          cat > "$RUNNER_TEMP/mingw-thread-test.cpp" <<'EOF'
+          #include <condition_variable>
+          #include <mutex>
+          #include <thread>
+          int main() {
+              std::mutex mutex;
+              std::condition_variable condition;
+              bool ready = false;
+              std::thread worker([&] {
+                  { std::lock_guard<std::mutex> lock(mutex); ready = true; }
+                  condition.notify_one();
+              });
+              { std::unique_lock<std::mutex> lock(mutex); condition.wait(lock, [&] { return ready; }); }
+              worker.join();
+              return 0;
+          }
+          EOF
+          i686-w64-mingw32-g++-posix -std=c++20 -pthread -static \
+            -march=prescott -DWINVER=0x0501 -D_WIN32_WINNT=0x0501 \
+            "$RUNNER_TEMP/mingw-thread-test.cpp" -o "$RUNNER_TEMP/mingw-thread-test.exe"
+          if i686-w64-mingw32-objdump -p "$RUNNER_TEMP/mingw-thread-test.exe" | grep -i 'DLL Name:.*winpthread'; then
+            echo "::error::The XP executable would depend on a dynamic winpthread DLL."
+            exit 1
+          fi
+          echo "C++ condition_variable/thread smoke test linked without a winpthread DLL."
+
 
       - name: Build native icon generator
         run: |
