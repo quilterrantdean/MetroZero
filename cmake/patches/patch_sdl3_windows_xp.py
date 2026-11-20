@@ -15,13 +15,19 @@ from pathlib import Path
 def replace_once(root: Path, relative: str, old: str, new: str) -> None:
     path = root / relative
     source = path.read_text(encoding="utf-8")
-    count = source.count(old)
-    if count != 1:
+    old_count = source.count(old)
+    new_count = source.count(new)
+    if old_count == 1 and new_count == 0:
+        source = source.replace(old, new, 1)
+    elif old_count == 0 and new_count == 1:
+        return  # The cached SDL source already contains this exact adjustment.
+    else:
         raise SystemExit(
-            f"{relative}: expected exactly one source match, found {count}; "
+            f"{relative}: expected one original or one patched source block "
+            f"(found original={old_count}, patched={new_count}); "
             "the pinned SDL source may have changed"
         )
-    path.write_text(source.replace(old, new, 1), encoding="utf-8", newline="\n")
+    path.write_text(source, encoding="utf-8", newline="\\n")
 
 
 def main() -> int:
@@ -82,10 +88,15 @@ def main() -> int:
     end = events.find(mouse_case, start)
     if end < 0:
         raise SystemExit("SDL_windowsevents.c: matching WM_MOUSEMOVE boundary not found")
-    if win8_guard in events[start:end] or end_guard in events[start:end]:
-        raise SystemExit("SDL_windowsevents.c: pointer event block is already guarded")
-    events = events[:start] + win8_guard + events[start:end] + end_guard + "\n" + events[end:]
-    events_path.write_text(events, encoding="utf-8", newline="\n")
+    guarded = (
+        events[start : start + len(win8_guard)] == win8_guard
+        and events[end - len(end_guard) - 1 : end] == end_guard + "\\n"
+    )
+    if not guarded:
+        if win8_guard in events[start:end]:
+            raise SystemExit("SDL_windowsevents.c: partial or unexpected pointer-event guard")
+        events = events[:start] + win8_guard + events[start:end] + end_guard + "\\n" + events[end:]
+        events_path.write_text(events, encoding="utf-8", newline="\\n")
 
     print("Applied XP guard to SDL Windows 8 pointer-pen code.")
     return 0

@@ -22,7 +22,8 @@ jobs:
       - uses: actions/cache@v5
         with:
           path: .deps
-          key: metrozero-xp-deps-gcc13-zlib131-sdl3226-${{ hashFiles('CMakeLists.txt', 'cmake/mingw32-xp-prescott.cmake') }}
+          key: metrozero-xp-deps-gcc13-zlib131-sdl3226-${{ hashFiles('CMakeLists.txt', 'cmake/mingw32-xp-prescott.cmake', 'cmake/patches/patch_sdl3_windows_xp.py') }}
+          save-always: true
 
       - name: Install MinGW-w64 cross-compiler
         timeout-minutes: 15
