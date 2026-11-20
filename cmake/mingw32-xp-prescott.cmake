@@ -7,8 +7,7 @@ set(CMAKE_SYSTEM_PROCESSOR i686)
 set(CMAKE_C_COMPILER i686-w64-mingw32-gcc-win32)
 set(CMAKE_CXX_COMPILER i686-w64-mingw32-g++-win32)
 set(CMAKE_RC_COMPILER i686-w64-mingw32-windres)
-set(CMAKE_AR i686-w64-mingw32-ar)
-set(CMAKE_RANLIB i686-w64-mingw32-ranlib)
+# Let CMake use the compiler's LTO-aware archive tools when available.
 
 # Do not search the host for target libraries or headers.
 set(CMAKE_FIND_ROOT_PATH /usr/i686-w64-mingw32)
