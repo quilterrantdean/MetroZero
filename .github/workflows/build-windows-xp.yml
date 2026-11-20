@@ -95,11 +95,10 @@ jobs:
             exit 1
           fi
 
-          members="$(i686-w64-mingw32-ar t "$archive")"
-          printf '%s\\n' "$members" | grep -i 'misc' || true
-          member="$(printf '%s\\n' "$members" | grep -Ei '(^|[-_/])misc\\.(o|obj)
-          if [ -z "$member" ]; then
-            echo "::error::Could not locate the misc object in libwinpthread.a."
+          member="libwinpthread_la-misc.o"
+          if ! i686-w64-mingw32-ar t "$archive" | grep -Fxq "$member"; then
+            echo "::error::Could not locate $member in libwinpthread.a."
+            i686-w64-mingw32-ar t "$archive"
             exit 1
           fi
           echo "Replacing archive member: $member"
