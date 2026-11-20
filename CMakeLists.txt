@@ -37,7 +37,7 @@ if(CMAKE_CROSSCOMPILING)
 else()
     add_executable(metrozero_icon tools/metrozero_icon/main.cpp)
     set(METROZERO_ICON_COMMAND "$<TARGET_FILE:metrozero_icon>")
-    set(METROZERO_ICON_DEPENDS ${METROZERO_ICON_DEPENDS})
+    set(METROZERO_ICON_DEPENDS "metrozero_icon")
 endif()
 
 # Core: ROM loading and verification. No SDL dependency, so it can be tested headless.
