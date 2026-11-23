@@ -58,18 +58,27 @@ jobs:
           i686-w64-mingw32-g++-posix -march=prescott -Q --help=target 2>&1 | grep -E '^[[:space:]]*-msse3[[:space:]]+\[enabled\]'
 
       - name: Rebuild static winpthreads with Windows XP API baseline
+        shell: bash
         run: |
+          set -euxo pipefail
           source_dir=".deps/mingw-w64-src/mingw-w64-libraries/winpthreads"
           if [ ! -f "$source_dir/src/misc.c" ]; then
             rm -rf .deps/mingw-w64-src
             git clone --depth 1 --branch v11.0.1 https://github.com/mingw-w64/mingw-w64.git .deps/mingw-w64-src
           fi
+          test -s "$source_dir/src/misc.c"
 
           # Ubuntu's MinGW package builds winpthreads for a newer Windows baseline.
           # Recompile only misc.o against XP headers: its Vista-only branch imports
           # GetTickCount64, while its XP branch uses QueryPerformanceCounter/GetTickCount.
           archive="$(i686-w64-mingw32-gcc-posix -print-file-name=libwinpthread.a)"
+          if [ ! -f "$archive" ]; then
+            archive="$(find /usr -type f -name libwinpthread.a -print -quit)"
+          fi
+          echo "Static winpthreads archive: $archive"
+          test -n "$archive"
           test -f "$archive"
+
           work="$GITHUB_WORKSPACE/.deps/winpthreads-xp"
           mkdir -p "$work"
           i686-w64-mingw32-gcc-posix -O2 -Wall -DWIN32_LEAN_AND_MEAN \
@@ -78,23 +87,41 @@ jobs:
             -I"$source_dir/include" -I"$source_dir/src" \
             -march=prescott -mtune=prescott -msse3 \
             -c "$source_dir/src/misc.c" -o "$work/misc.o"
+          test -s "$work/misc.o"
 
-          if i686-w64-mingw32-nm -u "$work/misc.o" | grep -q 'GetTickCount64'; then
-            echo "::error::The rebuilt winpthreads object still references GetTickCount64."
+          i686-w64-mingw32-nm -u "$work/misc.o" | tee "$work/misc.undefined.txt"
+          if grep -q 'GetTickCount64' "$work/misc.undefined.txt"; then
+            echo "::error::The XP-built winpthreads object still references GetTickCount64."
             exit 1
           fi
 
-          member_count="$(i686-w64-mingw32-ar t "$archive" | grep -cx 'misc.o' || true)"
-          test "$member_count" -eq 1
-          i686-w64-mingw32-ar d "$archive" misc.o
-          (cd "$work" && i686-w64-mingw32-ar r "$archive" misc.o)
-          i686-w64-mingw32-ranlib "$archive"
-
-          if i686-w64-mingw32-nm -A -u "$archive" | grep -q 'GetTickCount64'; then
-            echo "::error::The patched static winpthreads archive still references GetTickCount64."
+          member="libwinpthread_la-misc.o"
+          lib_dir="$(dirname "$archive")"
+          patched_archives=0
+          # The MinGW POSIX runtime ships both libwinpthread.a and its libpthread.a
+          # compatibility copy. The GCC -pthread driver may select either archive.
+          for candidate in "$lib_dir/libwinpthread.a" "$lib_dir/libpthread.a"; do
+            if [ ! -f "$candidate" ]; then
+              continue
+            fi
+            if ! i686-w64-mingw32-ar t "$candidate" | grep -Fxq "$member"; then
+              continue
+            fi
+            echo "Replacing $member in $candidate"
+            sudo i686-w64-mingw32-ar d "$candidate" "$member"
+            sudo i686-w64-mingw32-ar r "$candidate" "$work/misc.o"
+            sudo i686-w64-mingw32-ranlib "$candidate"
+            if i686-w64-mingw32-nm -A -u "$candidate" | grep -q 'GetTickCount64'; then
+              echo "::error::The patched archive still references GetTickCount64: $candidate"
+              exit 1
+            fi
+            patched_archives=$((patched_archives + 1))
+          done
+          if [ "$patched_archives" -eq 0 ]; then
+            echo "::error::No static winpthreads archive was patched."
             exit 1
           fi
-          echo "Static winpthreads rebuilt for Windows XP: $archive"
+          echo "Patched $patched_archives static pthread archive(s) for Windows XP."
 
       - name: Verify MinGW POSIX threading and static runtime
         run: |
@@ -193,6 +220,9 @@ jobs:
       - name: Patch SDL3 pen-input code for Windows XP
         run: python3 cmake/patches/patch_sdl3_windows_xp.py .deps/fetchcontent/sdl3-src
 
+      - name: Patch rcheevos secure CRT selection for Windows XP
+        run: python3 cmake/patches/patch_rcheevos_windows_xp.py .deps/fetchcontent/rcheevos-src
+
       - name: Build
         run: cmake --build build --parallel 2
 
@@ -224,6 +254,39 @@ jobs:
           data = subprocess.check_output(
               ["i686-w64-mingw32-objdump", "-p", exe], text=True, errors="replace"
           )
+
+          # Inspect imports by DLL. The MinGW headers advertise Annex K secure CRT
+          # functions even though XP's system msvcrt.dll does not export them.
+          imports_by_dll = {}
+          current_dll = None
+          for line in data.splitlines():
+              dll_match = re.match(r"^\s*DLL Name:\s*(\S+)", line)
+              if dll_match:
+                  current_dll = dll_match.group(1).lower()
+                  imports_by_dll.setdefault(current_dll, [])
+                  continue
+              if current_dll is not None:
+                  symbol_match = re.match(
+                      r"^\s*[0-9a-fA-F]+\s+<none>\s+[0-9a-fA-F]+\s+(\S+)", line
+                  )
+                  if symbol_match:
+                      imports_by_dll[current_dll].append(symbol_match.group(1))
+
+          xp_incompatible_crt = {
+              "freopen_s", "_wfreopen_s", "fopen_s", "_wfopen_s",
+              "vsnprintf_s", "_vsnprintf_s", "vsprintf_s", "_vsprintf_s",
+              "sprintf_s", "_sprintf_s", "snprintf_s", "_snprintf_s",
+              "fprintf_s", "vfprintf_s", "printf_s", "vprintf_s",
+              "strcpy_s", "strncpy_s", "strcat_s", "strncat_s",
+              "wcscpy_s", "wcsncpy_s", "wcscat_s", "wcsncat_s",
+              "sscanf_s", "fscanf_s", "scanf_s", "localtime_s", "gmtime_s",
+          }
+          msvcrt_imports = set(imports_by_dll.get("msvcrt.dll", []))
+          bad_crt_imports = sorted(msvcrt_imports & xp_incompatible_crt)
+          print("MSVCRT imports:", ", ".join(sorted(msvcrt_imports)))
+          if bad_crt_imports:
+              print("Windows XP-incompatible MSVCRT imports detected:", ", ".join(bad_crt_imports))
+              sys.exit(1)
 
           # These imports are not available on Windows XP (Vista or later).
           xp_incompatible = (

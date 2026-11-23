@@ -99,9 +99,9 @@ void usage() {
 // --console opens a new console window for logs.
 void attach_console(bool force) {
     if (AttachConsole(ATTACH_PARENT_PROCESS) || (force && AllocConsole())) {
-        FILE* f = nullptr;
-        freopen_s(&f, "CONOUT$", "w", stdout);
-        freopen_s(&f, "CONOUT$", "w", stderr);
+        // freopen is available in the Windows XP MSVCRT; freopen_s is not.
+        (void)std::freopen("CONOUT$", "w", stdout);
+        (void)std::freopen("CONOUT$", "w", stderr);
     }
 }
 #endif
