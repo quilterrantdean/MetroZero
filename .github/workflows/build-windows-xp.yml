@@ -15,8 +15,8 @@ permissions:
   contents: read
 
 env:
-  XP_DEPS: ${{ runner.temp }}/metrozero-xp-deps
-  XP_BUILD: ${{ runner.temp }}/metrozero-xp-build
+  XP_DEPS: ${{ github.workspace }}/.metrozero-xp-deps
+  XP_BUILD: ${{ github.workspace }}/.metrozero-xp-build
 
 jobs:
   windows-xp:
