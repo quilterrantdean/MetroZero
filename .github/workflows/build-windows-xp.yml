@@ -7,13 +7,16 @@ on:
       - windows-xp-pentium4
   workflow_dispatch:
 
-# Keep only the newest XP build; stale runs from older commits are cancelled.
 concurrency:
   group: metrozero-windows-xp
   cancel-in-progress: true
 
 permissions:
   contents: read
+
+env:
+  XP_DEPS: ${{ runner.temp }}/metrozero-xp-deps
+  XP_BUILD: ${{ runner.temp }}/metrozero-xp-build
 
 jobs:
   windows-xp:
@@ -24,21 +27,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/cache@v5
-        with:
-          path: .deps
-          key: metrozero-xp-deps-gcc13-zlib131-sdl3226-${{ hashFiles('CMakeLists.txt', 'cmake/mingw32-xp-prescott.cmake', 'cmake/patches/patch_sdl3_windows_xp.py') }}
-          save-always: true
+      - name: Prepare temporary build directories
+        run: |
+          set -euxo pipefail
+          rm -rf "$XP_DEPS" "$XP_BUILD"
+          mkdir -p "$XP_DEPS" "$XP_BUILD"
 
       - name: Install MinGW-w64 cross-compiler
         timeout-minutes: 10
         run: |
-          # CMake and Ninja are already installed on the official ubuntu-24.04 runner image.
-          # Use Ubuntu's archive directly and force IPv4; the runner's configured mirror route
-          # has intermittently failed to reach mirrors.edge.kernel.org over IPv4/IPv6.
           sudo rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
-          printf 'deb http://archive.ubuntu.com/ubuntu noble main universe\ndeb http://archive.ubuntu.com/ubuntu noble-updates main universe\ndeb http://security.ubuntu.com/ubuntu noble-security main universe\n' \
-            | sudo tee /etc/apt/sources.list
+          printf 'deb http://archive.ubuntu.com/ubuntu noble main universe\ndeb http://archive.ubuntu.com/ubuntu noble-updates main universe\ndeb http://security.ubuntu.com/ubuntu noble-security main universe\n' | sudo tee /etc/apt/sources.list
           apt_opts=(-o Acquire::ForceIPv4=true -o Acquire::Retries=2 -o Acquire::http::Timeout=30)
           installed=false
           for attempt in 1 2 3; do
@@ -55,32 +54,31 @@ jobs:
           ninja --version
           i686-w64-mingw32-gcc-posix --version
           i686-w64-mingw32-g++-posix --version
-          i686-w64-mingw32-g++-posix -march=prescott -Q --help=target 2>&1 | grep -E '^[[:space:]]*-msse3[[:space:]]+\[enabled\]'
+          i686-w64-mingw32-g++-posix -march=prescott -Q --help=target 2>&1 |
+            grep -E '^[[:space:]]*-msse3[[:space:]]+\[enabled\]'
 
       - name: Rebuild static winpthreads with Windows XP API baseline
         shell: bash
         run: |
           set -euxo pipefail
-          source_dir=".deps/mingw-w64-src/mingw-w64-libraries/winpthreads"
-          if [ ! -f "$source_dir/src/misc.c" ]; then
-            rm -rf .deps/mingw-w64-src
-            git clone --depth 1 --branch v11.0.1 https://github.com/mingw-w64/mingw-w64.git .deps/mingw-w64-src
-          fi
+
+          source_dir="$XP_DEPS/mingw-w64-src/mingw-w64-libraries/winpthreads"
+          rm -rf "$XP_DEPS/mingw-w64-src"
+          git clone --depth 1 --branch v11.0.1 \
+            https://github.com/mingw-w64/mingw-w64.git \
+            "$XP_DEPS/mingw-w64-src"
           test -s "$source_dir/src/misc.c"
 
-          # Ubuntu's MinGW package builds winpthreads for a newer Windows baseline.
-          # Recompile only misc.o against XP headers: its Vista-only branch imports
-          # GetTickCount64, while its XP branch uses QueryPerformanceCounter/GetTickCount.
           archive="$(i686-w64-mingw32-gcc-posix -print-file-name=libwinpthread.a)"
           if [ ! -f "$archive" ]; then
             archive="$(find /usr -type f -name libwinpthread.a -print -quit)"
           fi
-          echo "Static winpthreads archive: $archive"
           test -n "$archive"
           test -f "$archive"
 
-          work="$GITHUB_WORKSPACE/.deps/winpthreads-xp"
+          work="$XP_DEPS/winpthreads-xp"
           mkdir -p "$work"
+
           i686-w64-mingw32-gcc-posix -O2 -Wall -DWIN32_LEAN_AND_MEAN \
             -D_WIN32_WINNT=0x0501 -DWINVER=0x0501 \
             -DIN_WINPTHREAD -DWINPTHREAD_DBG=1 -D__USE_MINGW_ANSI_STDIO=0 \
@@ -89,39 +87,37 @@ jobs:
             -c "$source_dir/src/misc.c" -o "$work/misc.o"
           test -s "$work/misc.o"
 
-          i686-w64-mingw32-nm -u "$work/misc.o" | tee "$work/misc.undefined.txt"
+          i686-w64-mingw32-nm -u "$work/misc.o" |
+            tee "$work/misc.undefined.txt"
           if grep -q 'GetTickCount64' "$work/misc.undefined.txt"; then
-            echo "::error::The XP-built winpthreads object still references GetTickCount64."
+            echo "::error::The XP-built winpthreads object references GetTickCount64."
             exit 1
           fi
 
           member="libwinpthread_la-misc.o"
           lib_dir="$(dirname "$archive")"
           patched_archives=0
-          # The MinGW POSIX runtime ships both libwinpthread.a and its libpthread.a
-          # compatibility copy. The GCC -pthread driver may select either archive.
+
           for candidate in "$lib_dir/libwinpthread.a" "$lib_dir/libpthread.a"; do
-            if [ ! -f "$candidate" ]; then
-              continue
-            fi
-            if ! i686-w64-mingw32-ar t "$candidate" | grep -Fxq "$member"; then
-              continue
-            fi
+            [ -f "$candidate" ] || continue
+            i686-w64-mingw32-ar t "$candidate" |
+              grep -Fxq "$member" || continue
+
             echo "Replacing $member in $candidate"
             sudo i686-w64-mingw32-ar d "$candidate" "$member"
             sudo i686-w64-mingw32-ar r "$candidate" "$work/misc.o"
             sudo i686-w64-mingw32-ranlib "$candidate"
-            if i686-w64-mingw32-nm -A -u "$candidate" | grep -q 'GetTickCount64'; then
-              echo "::error::The patched archive still references GetTickCount64: $candidate"
+
+            if i686-w64-mingw32-nm -A -u "$candidate" |
+              grep -q 'GetTickCount64'; then
+              echo "::error::Patched archive still references GetTickCount64: $candidate"
               exit 1
             fi
             patched_archives=$((patched_archives + 1))
           done
-          if [ "$patched_archives" -eq 0 ]; then
-            echo "::error::No static winpthreads archive was patched."
-            exit 1
-          fi
-          echo "Patched $patched_archives static pthread archive(s) for Windows XP."
+
+          test "$patched_archives" -gt 0
+          echo "Patched $patched_archives static pthread archive(s)."
 
       - name: Verify MinGW POSIX threading and static runtime
         run: |
@@ -129,108 +125,151 @@ jobs:
           #include <condition_variable>
           #include <mutex>
           #include <thread>
+
           int main() {
               std::mutex mutex;
               std::condition_variable condition;
               bool ready = false;
+
               std::thread worker([&] {
-                  { std::lock_guard<std::mutex> lock(mutex); ready = true; }
+                  {
+                      std::lock_guard<std::mutex> lock(mutex);
+                      ready = true;
+                  }
                   condition.notify_one();
               });
-              { std::unique_lock<std::mutex> lock(mutex); condition.wait(lock, [&] { return ready; }); }
+
+              {
+                  std::unique_lock<std::mutex> lock(mutex);
+                  condition.wait(lock, [&] { return ready; });
+              }
+
               worker.join();
               return 0;
           }
           EOF
+
           i686-w64-mingw32-g++-posix -std=c++20 -pthread -static \
             -march=prescott -DWINVER=0x0501 -D_WIN32_WINNT=0x0501 \
-            "$RUNNER_TEMP/mingw-thread-test.cpp" -o "$RUNNER_TEMP/mingw-thread-test.exe"
-          if i686-w64-mingw32-objdump -p "$RUNNER_TEMP/mingw-thread-test.exe" | grep -i 'DLL Name:.*winpthread'; then
-            echo "::error::The XP executable would depend on a dynamic winpthread DLL."
-            exit 1
-          fi
-          echo "C++ condition_variable/thread smoke test linked without a winpthread DLL."
-          if i686-w64-mingw32-objdump -p "$RUNNER_TEMP/mingw-thread-test.exe" | grep -q 'GetTickCount64'; then
-            echo "::error::The XP threading smoke test still imports GetTickCount64."
-            exit 1
-          fi
-          echo "Threading smoke test has no Vista-only GetTickCount64 import."
+            "$RUNNER_TEMP/mingw-thread-test.cpp" \
+            -o "$RUNNER_TEMP/mingw-thread-test.exe"
 
+          imports="$RUNNER_TEMP/mingw-thread-test.imports.txt"
+          i686-w64-mingw32-objdump -p "$RUNNER_TEMP/mingw-thread-test.exe" |
+            tee "$imports"
+
+          if grep -Ei 'DLL Name:.*winpthread|GetTickCount64' "$imports"; then
+            echo "::error::The XP threading smoke test is incompatible."
+            exit 1
+          fi
 
       - name: Build native icon generator
         run: |
-          mkdir -p .deps/host-tools
-          g++ -std=c++20 -O2 tools/metrozero_icon/main.cpp -o .deps/host-tools/metrozero_icon
+          mkdir -p "$XP_DEPS/host-tools"
+          g++ -std=c++20 -O2 \
+            tools/metrozero_icon/main.cpp \
+            -o "$XP_DEPS/host-tools/metrozero_icon"
 
       - name: Build static zlib for Win32
         run: |
-          if [ ! -d .deps/zlib-src ]; then
-            git clone --depth 1 --branch v1.3.1 https://github.com/madler/zlib.git .deps/zlib-src
-          fi
-          cmake -S .deps/zlib-src -B .deps/zlib-build -G Ninja \
+          set -euo pipefail
+
+          rm -rf "$XP_DEPS/zlib-src" "$XP_DEPS/zlib-build" "$XP_DEPS/zlib-install"
+          git clone --depth 1 --branch v1.3.1 \
+            https://github.com/madler/zlib.git \
+            "$XP_DEPS/zlib-src"
+
+          cmake -S "$XP_DEPS/zlib-src" -B "$XP_DEPS/zlib-build" -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/cmake/mingw32-xp-prescott.cmake" \
             -DCMAKE_BUILD_TYPE=Release \
             -DZLIB_BUILD_EXAMPLES=OFF \
-            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/.deps/zlib-install"
-          cmake --build .deps/zlib-build --parallel 2
-          cmake --install .deps/zlib-build
-          test -f .deps/zlib-install/include/zlib.h
-          zlib_static="$(find .deps/zlib-install -type f -name 'libzlibstatic.a' -print -quit)"
+            -DCMAKE_INSTALL_PREFIX="$XP_DEPS/zlib-install"
+
+          cmake --build "$XP_DEPS/zlib-build" --parallel 2
+          cmake --install "$XP_DEPS/zlib-build"
+
+          test -f "$XP_DEPS/zlib-install/include/zlib.h"
+          zlib_static="$(
+            find "$XP_DEPS/zlib-install" -type f \
+              -name 'libzlibstatic.a' -print -quit
+          )"
           test -n "$zlib_static"
-          cp "$zlib_static" .deps/zlib-install/lib/libz.a
-          test -f .deps/zlib-install/lib/libz.a
+
+          mkdir -p "$XP_DEPS/zlib-install/lib"
+          cp "$zlib_static" "$XP_DEPS/zlib-install/lib/libz.a"
+          test -f "$XP_DEPS/zlib-install/lib/libz.a"
 
       - name: Configure
         run: |
-          cmake -S . -B build -G Ninja \
+          cmake -S . -B "$XP_BUILD" -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/cmake/mingw32-xp-prescott.cmake" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DFETCHCONTENT_BASE_DIR="$GITHUB_WORKSPACE/.deps/fetchcontent" \
-            -DMETROZERO_HOST_ICON_TOOL="$GITHUB_WORKSPACE/.deps/host-tools/metrozero_icon" \
+            -DFETCHCONTENT_BASE_DIR="$XP_DEPS/fetchcontent" \
+            -DMETROZERO_HOST_ICON_TOOL="$XP_DEPS/host-tools/metrozero_icon" \
             -DMETROZERO_VENDOR_SDL=ON \
             -DMETROZERO_BUILD_TOOLS=OFF \
             -DMETROZERO_BUILD_TESTS=ON \
-            -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST_LIBRARY=OFF \
-            -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF \
-            -DSDL_AVX=OFF -DSDL_AVX2=OFF -DSDL_AVX512F=OFF \
-            -DSDL_SSE4_1=OFF -DSDL_SSE4_2=OFF \
-            -DSDL_RENDER_D3D11=OFF -DSDL_RENDER_D3D12=OFF \
-            -DSDL_RENDER_GPU=OFF -DSDL_VULKAN=OFF \
-            -DSDL_WASAPI=OFF -DSDL_CAMERA=OFF -DSDL_SENSOR=OFF \
+            -DSDL_SHARED=OFF \
+            -DSDL_STATIC=ON \
+            -DSDL_TEST_LIBRARY=OFF \
+            -DSDL_TESTS=OFF \
+            -DSDL_EXAMPLES=OFF \
+            -DSDL_AVX=OFF \
+            -DSDL_AVX2=OFF \
+            -DSDL_AVX512F=OFF \
+            -DSDL_SSE4_1=OFF \
+            -DSDL_SSE4_2=OFF \
+            -DSDL_RENDER_D3D11=OFF \
+            -DSDL_RENDER_D3D12=OFF \
+            -DSDL_RENDER_GPU=OFF \
+            -DSDL_VULKAN=OFF \
+            -DSDL_WASAPI=OFF \
+            -DSDL_CAMERA=OFF \
+            -DSDL_SENSOR=OFF \
             -DHAVE_DXGI1_6_H:INTERNAL= \
             -DHAVE_SHELLSCALINGAPI_H:INTERNAL= \
             -DHAVE_WINDOWS_GAMING_INPUT_H:INTERNAL= \
-            -DZLIB_INCLUDE_DIR="$GITHUB_WORKSPACE/.deps/zlib-install/include" \
-            -DZLIB_LIBRARY_RELEASE="$GITHUB_WORKSPACE/.deps/zlib-install/lib/libz.a" \
-            -DZLIB_LIBRARY_DEBUG="$GITHUB_WORKSPACE/.deps/zlib-install/lib/libz.a" \
+            -DZLIB_INCLUDE_DIR="$XP_DEPS/zlib-install/include" \
+            -DZLIB_LIBRARY_RELEASE="$XP_DEPS/zlib-install/lib/libz.a" \
+            -DZLIB_LIBRARY_DEBUG="$XP_DEPS/zlib-install/lib/libz.a" \
             -DZLIB_USE_STATIC_LIBS=ON
 
       - name: Verify SDL Windows API baseline
         run: |
-          config="$(find .deps/fetchcontent/sdl3-build -path '*/build_config/SDL_build_config.h' -print -quit)"
+          config="$(
+            find "$XP_DEPS/fetchcontent/sdl3-build" \
+              -path '*/build_config/SDL_build_config.h' \
+              -print -quit
+          )"
           test -n "$config"
           echo "SDL config: $config"
+
           if grep -Eq '^#define (HAVE_DXGI1_6_H|HAVE_SHELLSCALINGAPI_H|HAVE_WINDOWS_GAMING_INPUT_H)[[:space:]]+1' "$config"; then
             echo "::error::SDL enabled a post-XP Windows API or controller backend."
             grep -E 'HAVE_DXGI1_6_H|HAVE_SHELLSCALINGAPI_H|HAVE_WINDOWS_GAMING_INPUT_H' "$config"
             exit 1
           fi
+
           grep -E 'HAVE_DXGI1_6_H|HAVE_SHELLSCALINGAPI_H|HAVE_WINDOWS_GAMING_INPUT_H' "$config"
 
       - name: Patch SDL3 pen-input code for Windows XP
-        run: python3 cmake/patches/patch_sdl3_windows_xp.py .deps/fetchcontent/sdl3-src
+        run: |
+          python3 cmake/patches/patch_sdl3_windows_xp.py \
+            "$XP_DEPS/fetchcontent/sdl3-src"
 
       - name: Patch rcheevos secure CRT selection for Windows XP
-        run: python3 cmake/patches/patch_rcheevos_windows_xp.py .deps/fetchcontent/rcheevos-src
+        run: |
+          python3 cmake/patches/patch_rcheevos_windows_xp.py \
+            "$XP_DEPS/fetchcontent/rcheevos-src"
 
       - name: Build
-        run: cmake --build build --parallel 2
+        run: cmake --build "$XP_BUILD" --parallel 2
 
       - name: Verify XP executable
         shell: bash
         run: |
           set -euo pipefail
-          exe="build/MetroZero.exe"
+          exe="$XP_BUILD/MetroZero.exe"
           test -s "$exe"
 
           pe_file="$(i686-w64-mingw32-objdump -f "$exe")"
@@ -239,11 +278,9 @@ jobs:
 
           pe_info="$(i686-w64-mingw32-objdump -p "$exe")"
           grep -E 'Subsystem|MajorSubsystemVersion|MinorSubsystemVersion' <<<"$pe_info"
-          echo "Checking PE subsystem: Windows GUI, version 5.1"
           grep -Eq 'Subsystem[[:space:]]+00000002[[:space:]]+\(Windows GUI\)' <<<"$pe_info"
           grep -Eq 'MajorSubsystemVersion[[:space:]]+5([[:space:]]|$)' <<<"$pe_info"
           grep -Eq 'MinorSubsystemVersion[[:space:]]+1([[:space:]]|$)' <<<"$pe_info"
-          echo "PE machine and Windows XP subsystem checks passed."
 
           python3 - "$exe" <<'PY'
           import re
@@ -252,43 +289,11 @@ jobs:
 
           exe = sys.argv[1]
           data = subprocess.check_output(
-              ["i686-w64-mingw32-objdump", "-p", exe], text=True, errors="replace"
+              ["i686-w64-mingw32-objdump", "-p", exe],
+              text=True,
+              errors="replace",
           )
 
-          # Inspect imports by DLL. The MinGW headers advertise Annex K secure CRT
-          # functions even though XP's system msvcrt.dll does not export them.
-          imports_by_dll = {}
-          current_dll = None
-          for line in data.splitlines():
-              dll_match = re.match(r"^\s*DLL Name:\s*(\S+)", line)
-              if dll_match:
-                  current_dll = dll_match.group(1).lower()
-                  imports_by_dll.setdefault(current_dll, [])
-                  continue
-              if current_dll is not None:
-                  symbol_match = re.match(
-                      r"^\s*[0-9a-fA-F]+\s+<none>\s+[0-9a-fA-F]+\s+(\S+)", line
-                  )
-                  if symbol_match:
-                      imports_by_dll[current_dll].append(symbol_match.group(1))
-
-          xp_incompatible_crt = {
-              "freopen_s", "_wfreopen_s", "fopen_s", "_wfopen_s",
-              "vsnprintf_s", "_vsnprintf_s", "vsprintf_s", "_vsprintf_s",
-              "sprintf_s", "_sprintf_s", "snprintf_s", "_snprintf_s",
-              "fprintf_s", "vfprintf_s", "printf_s", "vprintf_s",
-              "strcpy_s", "strncpy_s", "strcat_s", "strncat_s",
-              "wcscpy_s", "wcsncpy_s", "wcscat_s", "wcsncat_s",
-              "sscanf_s", "fscanf_s", "scanf_s", "localtime_s", "gmtime_s",
-          }
-          msvcrt_imports = set(imports_by_dll.get("msvcrt.dll", []))
-          bad_crt_imports = sorted(msvcrt_imports & xp_incompatible_crt)
-          print("MSVCRT imports:", ", ".join(sorted(msvcrt_imports)))
-          if bad_crt_imports:
-              print("Windows XP-incompatible MSVCRT imports detected:", ", ".join(bad_crt_imports))
-              sys.exit(1)
-
-          # These imports are not available on Windows XP (Vista or later).
           xp_incompatible = (
               "SHGetKnownFolderPath",
               "GetTickCount64",
@@ -307,17 +312,24 @@ jobs:
               "RegGetValueW",
               "GetThreadId",
           )
-          found = [name for name in xp_incompatible if re.search(r"\b" + re.escape(name) + r"\b", data)]
+
+          found = [
+              name for name in xp_incompatible
+              if re.search(r"\b" + re.escape(name) + r"\b", data)
+          ]
           if found:
               print("Windows XP-incompatible imports detected:", ", ".join(found))
               sys.exit(1)
 
-          # The executable must not require MinGW, SDL or zlib DLLs at runtime.
           dlls = re.findall(r"^\s*DLL Name: (.+)$", data, flags=re.MULTILINE)
-          print("Imported DLLs:", ", ".join(dlls) if dlls else "(none)")
           runtime_dlls = [
               dll for dll in dlls
-              if re.search(r"(libstdc\+\+|libgcc|libwinpthread|libatomic|libssp|SDL3|zlib1|ucrtbase|vcruntime|msvcp)", dll, re.I)
+              if re.search(
+                  r"(libstdc\+\+|libgcc|libwinpthread|libatomic|"
+                  r"libssp|SDL3|zlib1|ucrtbase|vcruntime|msvcp)",
+                  dll,
+                  re.I,
+              )
           ]
           if runtime_dlls:
               print("Non-system runtime DLL imports detected:", ", ".join(runtime_dlls))
@@ -328,10 +340,15 @@ jobs:
 
       - name: Package
         run: |
-          version="$(sed -n 's/^project(metrozero LANGUAGES C CXX VERSION \([0-9.]*\)).*/\1/p' CMakeLists.txt)"
+          version="$(
+            sed -n 's/^project(metrozero LANGUAGES C CXX VERSION \([0-9.]*\)).*/\1/p' \
+              CMakeLists.txt
+          )"
           test -n "$version"
+
           mkdir -p dist
-          cp build/MetroZero.exe "dist/MetroZero-${version}-Windows-XP-x86-Prescott.exe"
+          cp "$XP_BUILD/MetroZero.exe" \
+            "dist/MetroZero-${version}-Windows-XP-x86-Prescott.exe"
           sha256sum dist/MetroZero-*.exe | tee dist/SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v6
