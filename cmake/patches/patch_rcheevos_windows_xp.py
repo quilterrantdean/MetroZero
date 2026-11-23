@@ -76,10 +76,12 @@ replace_exact(
     secure_enabled,
     1,
 )
+# Include the newline so this does not also match the prefix of the already
+# patched '#if defined(...) && !defined(RC_NO_SECURE_CRT)' condition above.
 replace_exact(
     ROOT / "src/rhash/hash.c",
-    "#if defined(__STDC_SECURE_LIB__)",
-    secure_enabled,
+    "#if defined(__STDC_SECURE_LIB__)\n",
+    secure_enabled + "\n",
     2,
 )
 # Do not silently leave a secure-CRT branch in another source file when the
