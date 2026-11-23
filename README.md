@@ -31,7 +31,10 @@ Or get the latest version for your system from the [Releases page](https://githu
 ## Getting started
 
 1. **Open MetroZero** and click **Choose ROM...** to pick your dump. Only the USA release (game code
-   `BMXE`, revision 0) is supported; other regions, revisions, hacks and damaged dumps are refused.
+   `BMXE`, revision 0) is supported. Trimmed and overdumped files, files with a 512-byte copier
+   header, and dumps whose header was rewritten by a fixer or flash-cart tool are cleaned up in
+   memory (your file is not changed), and then checked against the exact USA dump. Other regions,
+   betas, revisions and hacks are refused, and the launcher tells you which version you picked.
    MetroZero only remembers where the file is. It never copies, uploads or changes it.
 2. **BIOS (optional).** No BIOS is needed. If you own a GBA BIOS dump, pick it in Settings > Game > BIOS
    to see the original boot animation.
@@ -71,7 +74,7 @@ buttons, aiming with the right stick, and a one-button Morph Ball (press to morp
 
 - **Settings menu (F1)** for display (scaling, 16:10 and 16:9 widescreen, screen effects), sound volume, controls and more.
 - **Sharp at any resolution:** the launcher and menus follow your display scaling and grow with the window, from a small laptop to fullscreen 4K (Display > Menu size to adjust).
-- **Keyboard and controllers**, with full remapping.
+- **Keyboard and controllers**, with full remapping and controller rumble (Controls > Rumble: on or off and strength).
 - **Save states**: ten slots with thumbnails. Quick save and load use Slot 1 unless you pick another.
 - **Fast forward and rewind**: fast forward at 2x or 4x, rewind up to the last 10 seconds.
 - **Cheats** (F1 > Cheats/Mods): unlimited health, missiles, super missiles and power bombs.
