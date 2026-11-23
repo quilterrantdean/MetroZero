@@ -541,17 +541,24 @@ jobs:
           test "v$version" = "$TAG"
 
           mkdir -p dist
-          cp "$XP_BUILD/MetroZero.exe" \
-            "dist/MetroZero-${version}-Windows-XP-x86-Prescott.exe"
-          (cd dist && sha256sum MetroZero-*.exe > SHA256SUMS.txt)
+          # The build is already -O3/-flto with --gc-sections and no -g; the
+          # COFF symbol table is the only removable weight left.
+          before=$(stat -c %s "$XP_BUILD/MetroZero.exe")
+          i686-w64-mingw32-strip --strip-all "$XP_BUILD/MetroZero.exe"
+          after=$(stat -c %s "$XP_BUILD/MetroZero.exe")
+          echo "MetroZero.exe: $before bytes -> $after bytes after strip"
+
+          exe="MetroZero-${version}-Windows-XP-x86-Prescott.exe"
+          cp "$XP_BUILD/MetroZero.exe" "dist/$exe"
+          (cd dist && sha256sum "$exe" > SHA256SUMS.txt)
+          (cd dist && zip -9 "MetroZero-${version}-Windows-XP-x86-Prescott.zip" \
+            "$exe" SHA256SUMS.txt)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v6
         with:
           name: MetroZero-Windows-XP-x86-Prescott
-          path: |
-            dist/MetroZero-*-Windows-XP-x86-Prescott.exe
-            dist/SHA256SUMS.txt
+          path: dist/MetroZero-*-Windows-XP-x86-Prescott.zip
           if-no-files-found: error
 
       - name: Save dependency cache
@@ -590,34 +597,18 @@ jobs:
           gh api "repos/$UPSTREAM/releases/tags/$TAG" > up.json
           name=$(jq -r '.name // empty' up.json); [ -n "$name" ] || name="$TAG"
           url=$(jq -r '.html_url' up.json)
-          published=$(jq -r '.published_at' up.json)
-          author=$(jq -r '.author.login // "unknown"' up.json)
-          commit=$(jq -r '.target_commitish' up.json)
-
-          jq -r '.body // ""' up.json \
-            | sed -E "s@(^|[^A-Za-z0-9/&])#([0-9]+)@\1${UPSTREAM}#\2@g" > body.md
 
           shopt -s nullglob
-          exes=(dist/MetroZero-*.exe)
-          if [ "${#exes[@]}" -ne 1 ]; then
-            echo "::error::Expected exactly one packaged executable in dist/, found ${#exes[@]}"
+          zips=(dist/MetroZero-*.zip)
+          if [ "${#zips[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one packaged zip in dist/, found ${#zips[@]}"
             exit 1
           fi
-          exe=$(basename "${exes[0]}")
 
           {
-            echo "> **Unofficial Windows XP (32-bit) build** of release [\`${TAG}\`](${url}) from \`${UPSTREAM}\`."
-            echo "> Published upstream on ${published} by @${author} (ref. \`${commit}\`)."
-            echo ">"
-            echo "> | File | Optimization |"
-            echo "> |---|---|"
-            echo "> | \`${exe}\` | Pentium 4 Prescott (\`-march=prescott\`, SSE3), XP SP3 API baseline, fully static |"
-            echo ">"
-            echo "> Requires 32-bit Windows XP SP3."
+            echo "**Unofficial Windows XP (32-bit) build** of [\`${TAG}\`](${url}) from \`${UPSTREAM}\`."
             echo ""
-            echo "---"
-            echo ""
-            cat body.md
+            echo "Requires 32-bit Windows XP SP3; Pentium 4 Prescott (\`-march=prescott\`, SSE3) and fully static. Changes: see the [upstream release notes](${url})."
           } > notes.md
 
           if [ "${FORCE:-}" = "true" ]; then
@@ -627,7 +618,7 @@ jobs:
           latest_up=$(gh api "repos/$UPSTREAM/releases/latest" --jq '.tag_name')
           if [ "$TAG" = "$latest_up" ]; then latest=true; else latest=false; fi
 
-          gh release create "$RELEASE_TAG" dist/MetroZero-*.exe dist/SHA256SUMS.txt \
+          gh release create "$RELEASE_TAG" "${zips[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$SYNCED_SHA" \
             --title "$name" \
