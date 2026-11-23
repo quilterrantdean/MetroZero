@@ -170,47 +170,91 @@ std::vector<std::uint8_t> render(int size) {
     return px;
 }
 
-}  // namespace
-
-// Encodes a PNG to memory by writing it to a temp file path; simpler: reuse write_png's logic.
-std::vector<std::uint8_t> png_bytes(int px) {
-    std::string tmp = "metrozero_icon_tmp_" + std::to_string(px) + ".png";
-    if (!write_png(tmp, px, px, render(px))) return {};
-    std::ifstream f(tmp, std::ios::binary);
-    std::vector<std::uint8_t> b((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    f.close();
-    std::remove(tmp.c_str());
-    return b;
+void le16(std::vector<std::uint8_t>& v, std::uint16_t x) {
+    v.push_back(std::uint8_t(x));
+    v.push_back(std::uint8_t(x >> 8));
 }
 
-// Windows .ico with PNG-compressed entries (supported since Windows Vista).
+void le32(std::vector<std::uint8_t>& v, std::uint32_t x) {
+    for (int i = 0; i < 4; ++i) v.push_back(std::uint8_t(x >> (8 * i)));
+}
+
+// Windows XP requires BMP/DIB icon entries; PNG-compressed ICO entries only work on Vista+.
+std::vector<std::uint8_t> dib_icon_image(int size) {
+    const auto rgba = render(size);
+    const std::size_t xor_stride = std::size_t(size) * 4;
+    const std::size_t mask_stride = ((std::size_t(size) + 31) / 32) * 4;
+    std::vector<std::uint8_t> image;
+    image.reserve(40 + xor_stride * size + mask_stride * size);
+
+    // BITMAPINFOHEADER. ICO DIB height is doubled to include the AND mask.
+    le32(image, 40);
+    le32(image, std::uint32_t(size));
+    le32(image, std::uint32_t(size * 2));
+    le16(image, 1);
+    le16(image, 32);
+    le32(image, 0); // BI_RGB
+    le32(image, std::uint32_t(xor_stride * size));
+    le32(image, 0); // horizontal pixels per meter
+    le32(image, 0); // vertical pixels per meter
+    le32(image, 0); // colors used
+    le32(image, 0); // important colors
+
+    // XOR bitmap: bottom-up BGRA pixels.
+    for (int y = size - 1; y >= 0; --y) {
+        for (int x = 0; x < size; ++x) {
+            const std::size_t p = (std::size_t(y) * size + x) * 4;
+            image.push_back(rgba[p + 2]);
+            image.push_back(rgba[p + 1]);
+            image.push_back(rgba[p + 0]);
+            image.push_back(rgba[p + 3]);
+        }
+    }
+
+    // AND mask, also bottom-up and DWORD aligned. A set bit marks a transparent pixel.
+    for (int y = size - 1; y >= 0; --y) {
+        const std::size_t row_start = image.size();
+        image.resize(row_start + mask_stride, 0);
+        for (int x = 0; x < size; ++x) {
+            const std::size_t p = (std::size_t(y) * size + x) * 4;
+            if (rgba[p + 3] < 128)
+                image[row_start + std::size_t(x / 8)] |= std::uint8_t(0x80 >> (x % 8));
+        }
+    }
+    return image;
+}
+
 bool write_ico(const std::string& path) {
     const int sizes[] = {16, 24, 32, 48, 64, 128, 256};
-    std::vector<std::vector<std::uint8_t>> imgs;
-    for (int s : sizes) imgs.push_back(png_bytes(s));
+    std::vector<std::vector<std::uint8_t>> images;
+    for (int size : sizes) images.push_back(dib_icon_image(size));
+
     std::vector<std::uint8_t> out;
-    auto le16 = [&](unsigned v) { out.push_back(std::uint8_t(v)); out.push_back(std::uint8_t(v >> 8)); };
-    auto le32 = [&](std::uint32_t v) { for (int i = 0; i < 4; ++i) out.push_back(std::uint8_t(v >> (8 * i))); };
-    le16(0);
-    le16(1);
-    le16(unsigned(imgs.size()));
-    std::uint32_t offset = 6 + 16 * std::uint32_t(imgs.size());
-    for (size_t i = 0; i < imgs.size(); ++i) {
-        out.push_back(std::uint8_t(sizes[i] >= 256 ? 0 : sizes[i]));
-        out.push_back(std::uint8_t(sizes[i] >= 256 ? 0 : sizes[i]));
-        out.push_back(0);
-        out.push_back(0);
-        le16(1);
-        le16(32);
-        le32(std::uint32_t(imgs[i].size()));
-        le32(offset);
-        offset += std::uint32_t(imgs[i].size());
+    le16(out, 0); // reserved
+    le16(out, 1); // ICO type
+    le16(out, std::uint16_t(images.size()));
+
+    std::uint32_t offset = std::uint32_t(6 + 16 * images.size());
+    for (std::size_t i = 0; i < images.size(); ++i) {
+        const auto size = std::uint32_t(sizes[i]);
+        out.push_back(std::uint8_t(size == 256 ? 0 : size));
+        out.push_back(std::uint8_t(size == 256 ? 0 : size));
+        out.push_back(0); // palette colors
+        out.push_back(0); // reserved
+        le16(out, 1); // planes
+        le16(out, 32); // bits per pixel
+        le32(out, std::uint32_t(images[i].size()));
+        le32(out, offset);
+        offset += std::uint32_t(images[i].size());
     }
-    for (auto& img : imgs) out.insert(out.end(), img.begin(), img.end());
+    for (const auto& image : images) out.insert(out.end(), image.begin(), image.end());
+
     std::ofstream f(path, std::ios::binary);
     f.write(reinterpret_cast<const char*>(out.data()), std::streamsize(out.size()));
     return bool(f);
 }
+
+}  // namespace
 
 int main(int argc, char** argv) {
     if (argc == 3 && std::string(argv[1]) == "--ico") return write_ico(argv[2]) ? 0 : 1;

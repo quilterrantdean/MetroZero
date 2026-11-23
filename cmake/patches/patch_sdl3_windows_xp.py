@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Apply the small SDL 3.2.26 source adjustment required for Windows XP.
-
-MinGW-w64 can expose declarations for Windows 8 pointer-pen APIs even when the
-application is targeting XP. SDL 3.2.26 declares and uses those types
-unconditionally. XP has no WM_POINTER pen support, so omit only that code path.
-"""
-
+"""Apply the small SDL 3.2.26 source adjustments required for Windows XP."""
 from __future__ import annotations
 
 import sys
@@ -18,16 +12,17 @@ def replace_once(root: Path, relative: str, old: str, new: str) -> None:
     old_count = source.count(old)
     new_count = source.count(new)
     if old_count == 1 and new_count == 0:
-        source = source.replace(old, new, 1)
+        path.write_text(source.replace(old, new, 1), encoding="utf-8", newline="\n")
     elif old_count == 0 and new_count == 1:
-        return  # The cached SDL source already contains this exact adjustment.
+        return
+    elif old_count == 0 and new_count >= 1:
+        return
     else:
         raise SystemExit(
             f"{relative}: expected one original or one patched source block "
             f"(found original={old_count}, patched={new_count}); "
             "the pinned SDL source may have changed"
         )
-    path.write_text(source, encoding="utf-8", newline="\n")
 
 
 def main() -> int:
@@ -65,8 +60,6 @@ def main() -> int:
         + end_guard,
     )
 
-    # COPY_FILE_NO_BUFFERING is Vista+ and is unsupported on Windows XP.
-    # Keep the XP-supported decrypted-destination flag and use normal buffered I/O.
     replace_once(
         root,
         "src/filesystem/windows/SDL_sysfsops.c",
@@ -80,23 +73,39 @@ def main() -> int:
 
     events_path = root / "src/video/windows/SDL_windowsevents.c"
     events = events_path.read_text(encoding="utf-8")
-    pointer_case = "    case WM_POINTERENTER:\n"
-    mouse_case = "    case WM_MOUSEMOVE:\n"
-    if events.count(pointer_case) != 1:
-        raise SystemExit("SDL_windowsevents.c: WM_POINTERENTER case not found uniquely")
-    start = events.index(pointer_case)
-    end = events.find(mouse_case, start)
-    if end < 0:
-        raise SystemExit("SDL_windowsevents.c: matching WM_MOUSEMOVE boundary not found")
-    guarded = (
-        events[start : start + len(win8_guard)] == win8_guard
-        and events[end - len(end_guard) - 1 : end] == end_guard + "\n"
+
+    pointer_markers = (
+        "    case WM_POINTERENTER:\n",
+        "    case WM_POINTERDOWN:\n",
+        "    case WM_POINTERUP:\n",
+        "    case WM_POINTERUPDATE:\n",
+        "    case WM_POINTERCAPTURECHANGED:\n",
+        "    case WM_POINTERLEAVE:\n",
     )
-    if not guarded:
-        if win8_guard in events[start:end]:
-            raise SystemExit("SDL_windowsevents.c: partial or unexpected pointer-event guard")
-        events = events[:start] + win8_guard + events[start:end] + end_guard + "\n" + events[end:]
-        events_path.write_text(events, encoding="utf-8", newline="\n")
+    mouse_marker = "    case WM_MOUSEMOVE:\n"
+
+    found_pointer = False
+    for pointer_marker in pointer_markers:
+        count = events.count(pointer_marker)
+        if count > 1:
+            raise SystemExit(f"SDL_windowsevents.c: {pointer_marker.strip()} found more than once")
+        if count != 1:
+            continue
+        found_pointer = True
+        start = events.index(pointer_marker)
+        end = events.find(mouse_marker, start)
+        if end < 0:
+            raise SystemExit("SDL_windowsevents.c: matching WM_MOUSEMOVE boundary not found")
+
+        block = events[start:end]
+        if win8_guard in block:
+            continue
+        events = events[:start] + win8_guard + block + end_guard + "\n" + events[end:]
+
+    if not found_pointer:
+        raise SystemExit("SDL_windowsevents.c: no Windows pointer-event case found")
+
+    events_path.write_text(events, encoding="utf-8", newline="\n")
 
     print("Applied XP guard to SDL Windows 8 pointer-pen code.")
     return 0
