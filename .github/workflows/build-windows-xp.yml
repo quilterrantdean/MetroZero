@@ -426,7 +426,13 @@ jobs:
             "$XP_DEPS/fetchcontent/rcheevos-src"
 
       - name: Build
-        run: cmake --build "$XP_BUILD" --parallel 2
+        run: |
+          if ! cmake --build "$XP_BUILD" --parallel 2 > "$XP_DEPS/build.log" 2>&1; then
+            echo "::error::Build failed; compiler errors follow"
+            { grep -i -E 'error' "$XP_DEPS/build.log" || tail -n 60 "$XP_DEPS/build.log"; } | tail -n 60
+            exit 1
+          fi
+          tail -n 5 "$XP_DEPS/build.log"
 
       - name: Verify XP executable
         shell: bash
