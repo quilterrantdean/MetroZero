@@ -33,7 +33,7 @@ Workflow `Build Windows XP` (`.github/workflows/build-windows-xp.yml`). Triggers
 
 - XP SP3 x86 build; launcher, menus, game runtime (Metroid: Zero Mission USA, BMXE rev 0).
 - CI build and all packaging checks, on both `main` and `windows-xp-pentium4`.
-- Update check against upstream: **GUI update notifications are real and work** (owner report, 2026-11-24): both "you are up to date" and new-release notices. The `--check-update` CLI flag was not tested yet.
+- Update check against upstream: **GUI update notifications are real and work** (owner report, 2026-11-24): both "you are up to date" and new-release notices. The `--check-update` CLI flag was tested and works (2026-11-24).
 
 ## Unverified / not wanted
 
@@ -44,7 +44,9 @@ Workflow `Build Windows XP` (`.github/workflows/build-windows-xp.yml`). Triggers
 
 ## Known issues
 
-- **RetroAchievements sign-in fails on XP** with `WinHTTP error 2148074278` (`0x80090326`, `SEC_E_ILLEGAL_MESSAGE`). Full evaluation in `network-connectivity.md`. The owner's goal (2026-11-24) is a rewrite of the TLS code following the AuroraAssetEditor `xp-port` recipe (static OpenSSL 1.1.1w + static libcurl 8.11.0, `cacert.pem` shipped, TLS 1.2 minimum). No code changed yet; owner testing plan pending (see chat, 2026-11-24).
+- **RetroAchievements sign-in fails on XP** with `WinHTTP error 2148074278` (`0x80090326`, `SEC_E_ILLEGAL_MESSAGE`). Full evaluation and on-machine measurements in `network-connectivity.md`. Diagnosis confirmed 2026-11-24 on the owner's XP SP3 machine: OpenSSL 3.5.2 completes TLS 1.2 and 1.3 handshakes with `Verify return code: 0 (ok)` for both `retroachievements.org` and `api.github.com`; `--check-update` works from the CLI. The Schannel/WinHTTP client stack is the only broken link.
+- GUI update notifications work (owner report); `--check-update` CLI confirmed working 2026-11-24 (`Up to date (latest release: 1.5.0).`).
+- Owner's browsing is via UXP-based browsers (New Moon 28, Mypal, Supermium); IE8 is not usable. UXP browsers carry their own TLS stack, which is why they work on XP.
 
 ## Owner context (2026-11-24)
 
@@ -62,5 +64,5 @@ Workflow `Build Windows XP` (`.github/workflows/build-windows-xp.yml`). Triggers
 ## Open questions
 
 1. **Fork line reconciliation.** `windows-xp-pentium4` (README rewrite, no auto-release) and `main` (v1.5.0-xp, auto-release workflow) diverged. Which line is canonical going forward, and does the owner want a PR from `windows-xp-pentium4` into `main` to drop `release-windows-xp.yml`?
-2. **RetroAchievements on XP.** Direction agreed (2026-11-24): rewrite the TLS transport following the AuroraAssetEditor `xp-port` recipe. Awaiting owner test results (clock, OpenSSL `s_client` handshake, cacert.pem validation) before code work, and the decision on shipping `cacert.pem` next to the exe plus the retry-without-verify fallback for drifted XP clocks.
+2. **RetroAchievements on XP.** Direction agreed (2026-11-24): rewrite the TLS transport following the AuroraAssetEditor `xp-port` recipe. On-machine measurements done, diagnosis confirmed. Awaiting owner decisions (asked 2026-11-24): OpenSSL version for the static build (3.x vs 1.1.1w), certificate verification policy, scope (unify both HTTP call sites vs RA-only), and how `cacert.pem` ships (next to the exe vs embedded).
 3. **Error message quality.** `src/app/http.cpp` reports raw WinHTTP decimal codes. Worth mapping `0x80090326` and friends to a one-line hint? Small, safe, but still a code change; awaiting approval.

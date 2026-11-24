@@ -1,6 +1,6 @@
 # Internet connectivity: the RetroAchievements sign-in failure
 
-Status: **evaluation done; rewrite of the TLS layer is the agreed direction (owner decision, 2026-11-24). No code changed yet.** Last verified 2026-11-24. Evidence: owner's screenshot of the Achievements settings tab on Windows XP (`Could not sign in: Could not reach the server (WinHTTP error 2148074278)`), plus code inspection. This sandbox cannot reach `retroachievements.org` (egress blocked), so the endpoint side was not probed from here.
+Status: **diagnosis confirmed on the owner's XP machine (2026-11-24); TLS layer rewrite is the agreed direction. No code changed yet.** The RetroAchievements endpoint was probed from the owner's XP machine with OpenSSL s_client; everything except Schannel/WinHTTP works.
 
 ## TL;DR
 
@@ -37,13 +37,19 @@ Same OS stack, same WinHTTP calls, different endpoint. The difference is entirel
 
 This is inference, not measurement: this sandbox cannot reach `retroachievements.org`, and the on-machine TLS capability was not probed. What can be said with certainty is the decoded error and the code path. Ruling GitHub out was not tested either; both were exercised with the same WinHTTP call pattern.
 
-To discriminate on the machine:
+## On-machine measurements (owner ran these, 2026-11-24)
 
-1. `MetroZero.exe --check-update` (or the Updates tab) — expect a version result, no error.
-2. Open `https://retroachievements.org` in **IE** (Schannel). If it fails with an SSL/TLS error, the OS stack is the limit.
-3. If available on the machine, open the same URL in **Firefox** (own TLS stack). Firefox working while IE fails is the tell that Schannel is the bottleneck, not the network.
-4. If the machine is POSReady-entitled: install KB4019276, enable TLS 1.1/1.2 as above, reboot, retry sign-in.
-5. Record the result in `state.md`.
+Environment: real XP SP3 machine (`ver` = 5.1.2600), OpenSSL Win32 3.5.2 at `C:\Program Files\OpenSSL-Win32\bin` (official build, `libssl-3.dll`/`libcrypto-3.dll` alongside), cURL bundle at `C:\Program Files\cURL\curl-ca-bundle.crt` (used as CA file).
+
+| Test | Result |
+|---|---|
+| `openssl s_client -connect retroachievements.org:443 -servername retroachievements.org -tls1_2 -CAfile curl-ca-bundle.crt` | **OK.** Chain validated: leaf CN=retroachievements.org (WE1, Google Trust Services, EC prime256v1), DC domain validated; `Verify return code: 0 (ok)`. Cipher `ECDHE-ECDSA-CHACHA20-POLY1305`, ext master secret yes. |
+| Same with `-tls1_3` | **OK.** `TLSv1.3`, `TLS_AES_256_GCM_SHA384`, group `X25519MLKEM768`, `Verify return code: 0 (ok)`. |
+| `openssl s_client -connect api.github.com:443 ... -tls1_2` | **OK.** Sectigo ECC chain; `Verify return code: 0 (ok)`. |
+| `MetroZero.exe --check-update` (CLI) | **Works.** Output: `MetroZero 1.5.0` / `Up to date (latest release: 1.5.0).` |
+| IE8 | Cannot be used by the owner; browsing is done with UXP-based forks (New Moon 28, Mypal, Supermium), which is why web browsing works despite Schannel. |
+
+Conclusions: the machine's network, DNS, certificate store and clock are all fine (the 2026-dated cert chain verifies, which also rules out a drifted clock beyond a few minutes). Schannel/WinHTTP is the only broken link, unable to speak TLS 1.2+ with SNI to these edges. A TLS stack bundled with the app (independent of Schannel) will fix RA on XP with no OS changes. The UXP-based browsers work for the same reason: they carry their own TLS.
 
 ## Failure handling that already exists (keep it)
 
