@@ -100,6 +100,11 @@ if(METROZERO_STATIC_LIBCURL)
             message(FATAL_ERROR "METROZERO_STATIC_LIBCURL=ON but ${_tls_check} was not found; set METROZERO_TLS_ROOT to the install prefix")
         endif()
     endforeach()
+    # Static libcurl on MinGW also requires CURL_STATICLIB at the point of use, otherwise
+    # curl.h declares the API as __declspec(dllimport) and the linker looks for _imp__*
+    # symbols that the static archive does not export (CI: undefined reference to
+    # `_imp__curl_easy_strerror` with libcurl.a linked).
+    add_compile_definitions(CURL_STATICLIB)
     if(ZLIB_FOUND)
         set(_metrozero_tls_z ZLIB::ZLIB)
     else()
