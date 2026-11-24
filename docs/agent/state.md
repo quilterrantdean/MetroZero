@@ -44,7 +44,9 @@ Consequences:
 | 45183600579 (2026-11-23) | `windows-xp-pentium4` | success |
 | 45106037641 | `main` | failure, 0s (superseded by 45107056511) |
 
-Failure of 45471067148 and fix (2026-11-24, `6122237`): only the `-posix` MinGW variants are installed (no unversioned `i686-w64-mingw32-gcc/g++`), so a bare cross prefix had no compiler; the OpenSSL sanity check also looked for `TLS_client_method` in `libcrypto.a` instead of `libssl.a`. Fixed with unversioned aliases in `/usr/local/bin`, `nm` on `libssl.a`, an `/source/old/3.5/` tarball fallback, and `::error::` tails of the build logs. Job logs cannot be fetched from the agent sandbox (signed URLs blocked), so diagnosis relied on reproduction of the `Configure`/`make` path locally.
+Failure of 45471067148 and fix (2026-11-24, `6122237`): the OpenSSL sanity check looked for `TLS_client_method` in `libcrypto.a` instead of `libssl.a`; that was the failing command. (The `-posix` update-alternatives do provide the unversioned `i686-w64-mingw32-gcc/g++` names, as the 20:11 run shows; the unversioned-alias step is redundant but harmless.)
+
+Second failure (run on `2a65ca7`, after #12 merged): `Build static libcurl` failed at `configure: error: --with-openssl was given but OpenSSL could not be detected` — curl's probe links bare `-lssl -lcrypto`, and static OpenSSL on MinGW needs the system libraries (`ws2_32 gdi32 crypt32 advapi32`), so every probe failed. Fixed by exporting `LIBS` with that set in the libcurl step (matching OpenSSL's own `LDLIBS` plus `advapi32` for the XP CryptoAPI RNG path used when built with `_WIN32_WINNT=0x0501`). OpenSSL 3.x does **not** import `bcrypt.dll` in that configuration: `USE_BCRYPTGENRANDOM` is only defined for MSVC with `_WIN32_WINNT >= 0x0600`; on MinGW/XP it uses `CryptAcquireContextW`/`CryptGenRandom` from advapi32. The PE import checks remain in force to catch this if it changes.
 
 ## Works (owner-reported or CI-observed)
 

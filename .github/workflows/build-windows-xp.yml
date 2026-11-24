@@ -290,6 +290,11 @@ jobs:
           export CPPFLAGS="-O2 -march=prescott -mtune=prescott -msse2 -msse3 -mno-ssse3 -mno-sse4 -mno-avx -mfpmath=sse -D_WIN32_WINNT=0x0501 -DWINVER=0x0501 -DCURL_STATICLIB -I$XP_DEPS/zlib-install/include"
           export CFLAGS="$CPPFLAGS"
           export LDFLAGS="-L$XP_DEPS/zlib-install/lib"
+          # curl's configure probes OpenSSL with bare -lssl -lcrypto; static OpenSSL on
+          # MinGW also needs these system libraries or every probe fails to link. This set
+          # matches OpenSSL's own LDLIBS (ws2_32 gdi32 crypt32) plus advapi32 (RtlGenRandom
+          # on XP, which is also what OpenSSL 3.x uses there with _WIN32_WINNT < 0x0600).
+          export LIBS="-lws2_32 -lgdi32 -lcrypt32 -ladvapi32"
 
           ./configure \
             --host=i686-w64-mingw32 \
