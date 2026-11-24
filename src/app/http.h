@@ -3,8 +3,9 @@
 // Requests run on background threads; their callbacks run on the thread that calls pump().
 //
 // Backends: libcurl loaded at run time on macOS (system library) and Linux (libcurl.so.4), so
-// nothing extra is linked or shipped; WinHTTP on Windows. Without a backend every request fails
-// with an error and the rest of the app keeps working.
+// nothing extra is linked or shipped; WinHTTP on classic Windows; statically linked libcurl+OpenSSL
+// on the Windows XP build (METROZERO_STATIC_LIBCURL), with cacert.pem next to the executable.
+// Without a backend every request fails with an error and the rest of the app keeps working.
 
 #include <functional>
 #include <string>

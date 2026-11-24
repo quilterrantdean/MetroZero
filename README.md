@@ -34,13 +34,13 @@ There are no branch-specific release downloads yet. The CI workflow uploads a bu
 
 1. Open [Actions → Build Windows XP](https://github.com/quilterrantdean/MetroZero-XP/actions/workflows/build-windows-xp.yml).
 2. Select a successful run for the `windows-xp-pentium4` branch.
-3. Download the `MetroZero-Windows-XP-x86-Prescott` artifact and verify it with the included `SHA256SUMS.txt`.
+3. Download the `MetroZero-Windows-XP-x86-Prescott` artifact and verify it with the included `SHA256SUMS.txt`. The artifact contains `MetroZero-<version>-Windows-XP-x86-Prescott.exe` and `cacert.pem` (the Mozilla CA bundle). Keep both files in the same folder.
 
 Artifacts are CI builds, not stable releases. Do not assume compatibility beyond the target and checks described above.
 
 ## Running MetroZero
 
-1. Run `MetroZero-<version>-Windows-XP-x86-Prescott.exe` on a compatible system.
+1. Run `MetroZero-<version>-Windows-XP-x86-Prescott.exe` on a compatible system. Keep `cacert.pem` next to the executable; online features (updates, achievements, badge images) verify certificates against it.
 2. Choose your legally dumped **Metroid: Zero Mission (USA)** ROM (`BMXE`, revision 0) in the app. The ROM is checked by the application; it is not included, copied, uploaded, or modified.
 3. A GBA BIOS is optional. Without one, the game can still be started.
 
@@ -62,6 +62,10 @@ The workflow verifies build-time properties; it cannot establish that the launch
 The supported, repeatable build path is the [Windows XP GitHub Actions workflow](.github/workflows/build-windows-xp.yml). It runs on Ubuntu, installs an i686 MinGW-w64 POSIX toolchain, builds the required static dependencies, applies the XP compatibility patches, and produces the executable artifact.
 
 The cross-toolchain configuration is in [`cmake/mingw32-xp-prescott.cmake`](cmake/mingw32-xp-prescott.cmake). It targets Windows 5.1 and `i686`, and enables Prescott/SSE3 instructions. Reproducing the build locally requires the corresponding MinGW-w64 packages and the dependency setup and patch steps from the workflow; a generic CMake build is not sufficient to produce this XP-targeted binary.
+
+## Networking on Windows XP
+
+Windows XP SP3 cannot talk TLS 1.2 or later through its built-in stack (Schannel caps out at TLS 1.0, before SNI existed), so WinHTTP is not a reliable way to reach modern HTTPS endpoints on XP (observed: the RetroAchievements sign-in fails at the TLS handshake). This branch builds a static HTTPS transport instead of relying on the OS: statically linked **OpenSSL 3.x** and **libcurl** (both built for i686/Prescott in CI), compiled into the executable, covering the achievements sign-in, badge images and the update check. Certificates are always verified against `cacert.pem` (the Mozilla CA bundle) shipped next to the executable; set the `METROZERO_CACERT` environment variable to use a different bundle. If the bundle is missing, HTTPS requests fail with an explanatory error rather than silently skipping verification.
 
 ## Upstream project
 

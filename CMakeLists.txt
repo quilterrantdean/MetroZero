@@ -21,6 +21,7 @@ option(METROZERO_BUILD_TOOLS "Build analysis tools (metrozero_disasm, needs Caps
 option(METROZERO_MACOS_BUNDLE "Build MetroZero.app (and the `dmg` target) on macOS" OFF)
 option(METROZERO_VENDOR_SDL "Always build SDL3 from source (static) instead of using a system install" OFF)
 option(METROZERO_PACKAGE "Add packaging targets (Windows zip, Linux AppDir install)" OFF)
+option(METROZERO_STATIC_LIBCURL "Link static OpenSSL+libcurl built for the XP target (MetroZero-XP); replaces WinHTTP and the runtime-loaded system libcurl" OFF)
 
 # App icon renderer (original procedural artwork); used for the macOS .icns, Windows .ico and
 # the Linux icon.
@@ -75,6 +76,33 @@ if(ZLIB_FOUND)
 endif()
 if(NOT MSVC)
     target_compile_options(metrozero_states PRIVATE -Wall -Wextra)
+endif()
+
+# Static TLS stack for the Windows XP build (see .github/workflows/build-windows-xp.yml).
+# The XP port of MetroZero cannot use the OS TLS (Schannel speaks at most TLS 1.0 there), so
+# HTTPS is provided by a statically linked libcurl + OpenSSL built for i686/Prescott.
+# The CA bundle is not compiled in: cacert.pem ships next to MetroZero.exe.
+if(METROZERO_STATIC_LIBCURL)
+    set(METROZERO_TLS_ROOT "" CACHE PATH "Install prefix with static libcurl and OpenSSL (include/ and lib/)")
+    find_path(METROZERO_CURL_INCLUDE_DIR curl/curl.h
+        HINTS "${METROZERO_TLS_ROOT}/include" ${CMAKE_PREFIX_PATH}
+        PATH_SUFFIXES include)
+    find_library(METROZERO_LIBCURL   NAMES curl   HINTS "${METROZERO_TLS_ROOT}/lib" ${CMAKE_PREFIX_PATH} PATH_SUFFIXES lib)
+    find_library(METROZERO_LIBSSL    NAMES ssl    HINTS "${METROZERO_TLS_ROOT}/lib" ${CMAKE_PREFIX_PATH} PATH_SUFFIXES lib)
+    find_library(METROZERO_LIBCRYPTO NAMES crypto HINTS "${METROZERO_TLS_ROOT}/lib" ${CMAKE_PREFIX_PATH} PATH_SUFFIXES lib)
+    foreach(_tls_check METROZERO_CURL_INCLUDE_DIR METROZERO_LIBCURL METROZERO_LIBSSL METROZERO_LIBCRYPTO)
+        if(NOT ${_tls_check})
+            message(FATAL_ERROR "METROZERO_STATIC_LIBCURL=ON but ${_tls_check} was not found; set METROZERO_TLS_ROOT to the install prefix")
+        endif()
+    endforeach()
+    if(ZLIB_FOUND)
+        set(_metrozero_tls_z ZLIB::ZLIB)
+    else()
+        set(_metrozero_tls_z ${ZLIB_LIBRARY_RELEASE})
+    endif()
+    set(METROZERO_TLS_LIBRARIES
+        "${METROZERO_LIBCURL}" "${METROZERO_LIBSSL}" "${METROZERO_LIBCRYPTO}" ${_metrozero_tls_z}
+        ws2_32 crypt32 advapi32 user32 gdi32)
 endif()
 
 # Updates from GitHub Releases: versions, release JSON, SHA-256, zip unpacking. No SDL.
@@ -266,7 +294,13 @@ if(TARGET SDL3::SDL3)
     if(APPLE)
         target_link_libraries(metrozero_launcher PRIVATE "-framework Security" "-framework CoreFoundation")
     elseif(WIN32)
-        target_link_libraries(metrozero_launcher PRIVATE winhttp advapi32)
+        if(METROZERO_STATIC_LIBCURL)
+            target_compile_definitions(metrozero_launcher PRIVATE METROZERO_STATIC_LIBCURL=1)
+            target_include_directories(metrozero_launcher SYSTEM PRIVATE "${METROZERO_CURL_INCLUDE_DIR}")
+            target_link_libraries(metrozero_launcher PRIVATE advapi32 ${METROZERO_TLS_LIBRARIES})
+        else()
+            target_link_libraries(metrozero_launcher PRIVATE winhttp advapi32)
+        endif()
     else()
         find_package(Threads REQUIRED)
         target_link_libraries(metrozero_launcher PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
@@ -280,7 +314,11 @@ if(TARGET SDL3::SDL3)
     target_include_directories(metrozero_updater PUBLIC src)
     target_link_libraries(metrozero_updater PUBLIC metrozero_update_core metrozero_app imgui SDL3::SDL3)
     target_compile_definitions(metrozero_updater PUBLIC METROZERO_VERSION="${PROJECT_VERSION}")
-    if(WIN32)
+    if(METROZERO_STATIC_LIBCURL)
+        target_compile_definitions(metrozero_updater PRIVATE METROZERO_STATIC_LIBCURL=1)
+        target_include_directories(metrozero_updater SYSTEM PRIVATE "${METROZERO_CURL_INCLUDE_DIR}")
+        target_link_libraries(metrozero_updater PRIVATE ${METROZERO_TLS_LIBRARIES})
+    elseif(WIN32)
         target_link_libraries(metrozero_updater PRIVATE winhttp)
     endif()
     if(NOT MSVC)
