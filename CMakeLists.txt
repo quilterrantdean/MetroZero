@@ -84,12 +84,17 @@ endif()
 # The CA bundle is not compiled in: cacert.pem ships next to MetroZero.exe.
 if(METROZERO_STATIC_LIBCURL)
     set(METROZERO_TLS_ROOT "" CACHE PATH "Install prefix with static libcurl and OpenSSL (include/ and lib/)")
+    # The XP toolchain file sets CMAKE_FIND_ROOT_PATH_MODE_* to ONLY, which excludes an
+    # absolute METROZERO_TLS_ROOT hint from the search entirely (CI: cmake Configure failed
+    # with "... was not found" even though the prefix contains the files). The hint points
+    # at a foreign prefix by design, so skip the find-root re-rooting for these lookups.
     find_path(METROZERO_CURL_INCLUDE_DIR curl/curl.h
         HINTS "${METROZERO_TLS_ROOT}/include" ${CMAKE_PREFIX_PATH}
-        PATH_SUFFIXES include)
-    find_library(METROZERO_LIBCURL   NAMES curl   HINTS "${METROZERO_TLS_ROOT}/lib" ${CMAKE_PREFIX_PATH} PATH_SUFFIXES lib)
-    find_library(METROZERO_LIBSSL    NAMES ssl    HINTS "${METROZERO_TLS_ROOT}/lib" ${CMAKE_PREFIX_PATH} PATH_SUFFIXES lib)
-    find_library(METROZERO_LIBCRYPTO NAMES crypto HINTS "${METROZERO_TLS_ROOT}/lib" ${CMAKE_PREFIX_PATH} PATH_SUFFIXES lib)
+        PATH_SUFFIXES include
+        NO_CMAKE_FIND_ROOT_PATH)
+    find_library(METROZERO_LIBCURL   NAMES curl   HINTS "${METROZERO_TLS_ROOT}/lib" ${CMAKE_PREFIX_PATH} PATH_SUFFIXES lib NO_CMAKE_FIND_ROOT_PATH)
+    find_library(METROZERO_LIBSSL    NAMES ssl    HINTS "${METROZERO_TLS_ROOT}/lib" ${CMAKE_PREFIX_PATH} PATH_SUFFIXES lib NO_CMAKE_FIND_ROOT_PATH)
+    find_library(METROZERO_LIBCRYPTO NAMES crypto HINTS "${METROZERO_TLS_ROOT}/lib" ${CMAKE_PREFIX_PATH} PATH_SUFFIXES lib NO_CMAKE_FIND_ROOT_PATH)
     foreach(_tls_check METROZERO_CURL_INCLUDE_DIR METROZERO_LIBCURL METROZERO_LIBSSL METROZERO_LIBCRYPTO)
         if(NOT ${_tls_check})
             message(FATAL_ERROR "METROZERO_STATIC_LIBCURL=ON but ${_tls_check} was not found; set METROZERO_TLS_ROOT to the install prefix")
