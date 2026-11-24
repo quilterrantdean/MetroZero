@@ -15,11 +15,11 @@ Windows XP SP3 (x86, Intel Pentium 4 Prescott) compatibility branch of **MetroZe
 
 ## Verified facts (2026-11-24)
 
-- CI `Build Windows XP` is green on `windows-xp-pentium4` and on `main`.
+- CI `Build Windows XP` is green on `windows-xp-pentium4` (run 45485937027, 2026-11-24) and on `main` (run 45267513841, 2026-11-23).
 - Update check against upstream (`--check-update`) reported working by the owner on real XP hardware.
-- RetroAchievements sign-in **failed** on the owner's XP machine with WinHTTP error 2148074278 (`0x80090326`). The TLS layer is being rebuilt (static OpenSSL 3.x + libcurl, no Schannel); code written 2026-11-24, awaiting CI verification and the owner's on-machine sign-in test. See `docs/agent/network-connectivity.md`.
+- RetroAchievements **sign-in works** on the owner's XP machine via the rebuilt static libcurl+OpenSSL transport (owner-verified 2026-11-24). The achievement-unlock path and badge images are not yet verified. See `docs/agent/network-connectivity.md`.
 - Update check: GUI notifications work; `--check-update` CLI also confirmed working (2026-11-24).
-- XP artifact now ships `MetroZero-<version>-Windows-XP-x86-Prescott.exe` plus `cacert.pem` (both covered by SHA256SUMS.txt). The exe requires `cacert.pem` next to it.
+- XP artifact ships `MetroZero-<version>-Windows-XP-x86-Prescott.exe` plus `cacert.pem` (both covered by SHA256SUMS.txt). The exe requires `cacert.pem` next to it. The artifact exe is not stripped (the `main` release workflow strips with `--strip-all`).
 - In-app install of updates: untested, not wanted. Releases are made manually by the owner from this repo.
 
 ## Hard rules
@@ -27,7 +27,7 @@ Windows XP SP3 (x86, Intel Pentium 4 Prescott) compatibility branch of **MetroZe
 - Never commit ROMs, BIOS images, saves, save states or anything derived from the ROM. `.gitignore` enforces this; keep it that way.
 - XP target baseline is fixed: XP SP3, x86, SSE3 (Prescott), subsystem 5.1. No post-XP APIs, no non-system runtime DLLs. CI enforces this on every build.
 - The build is CI-only (`.github/workflows/build-windows-xp.yml`). A generic local CMake configure is not an XP-valid build; do not "fix" CI locally and call the result verified.
-- Do not enable, restore or imitate the automatic upstream-following release workflow (`release-windows-xp.yml`, present on `main` at v1.5.0-xp, removed on `windows-xp-pentium4`). Releases here are manual and owner-driven.
+- Releases are manual, owner-driven affairs. `release-windows-xp.yml` (on `main`) was previously recorded as unwanted; the owner is now reconsidering it (2026-11-24, see `docs/agent/state.md`, Open questions 1): the planned direction is to keep it **aligned with the XP pipeline** rather than removed. Do not enable, restore or modify it, and do not merge anything into `main`, without the owner's explicit instruction.
 - Do not push to `main` or create extra branches. Work happens on the session-designated branch named in the session note.
 
 ## Conventions
