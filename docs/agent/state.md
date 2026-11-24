@@ -22,6 +22,20 @@ Reconciliation is an open question (see below). Do not "restore" the removed wor
 
 Workflow `Build Windows XP` (`.github/workflows/build-windows-xp.yml`). Triggers: push to `main` and `windows-xp-pentium4`, plus dispatch. i686 MinGW-w64 POSIX toolchain, XP API baseline, static build, Prescott/SSE3. It verifies: PE32, GUI subsystem 5.1, no post-XP imports (`GetTickCount64`, `SHGetKnownFolderPath`, ...), no non-system runtime DLLs, XP-rebuilt winpthreads, SDL3 and rcheevos XP patches.
 
+**Important (found 2026-11-24, `gh api .../actions/workflows`):** both build workflows were **manually disabled by the owner** in the repository settings:
+
+| Workflow | State |
+|---|---|
+| `Build Windows XP (x86, Pentium 4 Prescott)` (`.github/workflows/build-windows-xp.yml`) | `disabled_manually` |
+| `Build` (`.github/workflows/build.yml`) | `disabled_manually` |
+| `Release Windows XP (follow upstream)` (`.github/workflows/release-windows-xp.yml`) | **`active`** |
+
+Consequences:
+
+- No CI verification is possible right now, not even via `workflow_dispatch` (HTTP 422: disabled workflow).
+- The release workflow on `main` is still active; it polls upstream every 6 hours and, per its header, syncs the upstream tag and publishes a fork release automatically. The owner prefers manual releases. Whether that workflow should be re-enabled on `windows-xp-pentium4`, kept on `main`, or disabled is an owner decision. Do not change its state unilaterally; do not merge anything into `main` while it is active without owner instruction.
+- Last known green runs (2026-11-23, before the disable): `windows-xp-pentium4` and `main`, see table below.
+
 | Run | Branch | Result |
 |---|---|---|
 | 45267513841 (2026-11-23) | `main` (merge PR #9) | success |
@@ -48,7 +62,7 @@ TLS rewrite landed on branch `arena/39655905-metrozero-xp` (commits after `2b3fc
 
 Changed: new `src/app/tls_common.h` (cacert.pem discovery + curl error mapping), `src/app/http.cpp` (static backend `libcurl+OpenSSL` behind `METROZERO_STATIC_LIBCURL`; WinHTTP path kept for non-XP Windows builds), `src/update/http.cpp` (streaming `http_download` via static libcurl behind the same macro; POSIX curl-command path unchanged), `CMakeLists.txt` (new `METROZERO_STATIC_LIBCURL` option + `METROZERO_TLS_ROOT`), `.github/workflows/build-windows-xp.yml` (new OpenSSL 3.5.2 + curl 8.11.0 static build steps, cacert.pem download, PE checks extended with `BCryptGenRandom`/`bcrypt`), README (client install instructions, networking section), THIRD_PARTY_NOTICES (OpenSSL, libcurl), `.gitignore` (cacert.pem).
 
-Not yet done: CI verification of the workflow changes (dispatched manually or on push), and the owner's on-machine test of the sign-in. The XP build workflow triggers only on push to `main`/`windows-xp-pentium4`; for this branch use `gh workflow run build-windows-xp.yml --ref arena/39655905-metrozero-xp`.
+Not yet done: CI verification of the workflow changes (both build workflows are manually disabled in the repo; needs the owner to re-enable `Build Windows XP`), and the owner's on-machine test of the sign-in. The XP build workflow triggers only on push to `main`/`windows-xp-pentium4`; for this branch use `gh workflow run build-windows-xp.yml --ref arena/39655905-metrozero-xp` after re-enabling it.
 
 ## Known issues
 
