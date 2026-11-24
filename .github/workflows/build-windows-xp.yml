@@ -57,6 +57,17 @@ jobs:
           i686-w64-mingw32-g++-posix -march=prescott -Q --help=target 2>&1 |
             grep -E '^[[:space:]]*-msse3[[:space:]]+\[enabled\]'
 
+      - name: Ensure unversioned MinGW compiler aliases
+        run: |
+          # The CI installs only the -posix MinGW variants, which ship no unversioned
+          # i686-w64-mingw32-gcc/g++ binaries. Build tools configured with a bare
+          # i686-w64-mingw32- cross prefix (OpenSSL) or --host expect those names.
+          sudo ln -sf /usr/bin/i686-w64-mingw32-gcc-posix /usr/local/bin/i686-w64-mingw32-gcc
+          sudo ln -sf /usr/bin/i686-w64-mingw32-g++-posix /usr/local/bin/i686-w64-mingw32-g++
+          sudo ln -sf /usr/bin/i686-w64-mingw32-cpp-posix /usr/local/bin/i686-w64-mingw32-cpp
+          i686-w64-mingw32-gcc --version | head -n 1
+          i686-w64-mingw32-g++ --version | head -n 1
+
       - name: Rebuild static winpthreads with Windows XP API baseline
         shell: bash
         run: |
@@ -203,17 +214,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          version="3.5.2"
           source_dir="$XP_DEPS/openssl-src"
           prefix="$XP_DEPS/xp-tls"
           rm -rf "$source_dir" "$prefix" "$XP_DEPS/openssl.tar.gz"
           mkdir -p "$prefix"
 
-          # Release tarball from the official GitHub release, with the openssl.org mirror as fallback.
+          # Release tarball from the official GitHub release, with openssl.org as fallback
+          # (current releases live under /source/; previous ones move to /source/old/3.5/).
+          version="3.5.2"
           if ! curl -fsSL --retry 3 -o "$XP_DEPS/openssl.tar.gz" \
             "https://github.com/openssl/openssl/releases/download/openssl-${version}/openssl-${version}.tar.gz"; then
-            curl -fsSL --retry 3 -o "$XP_DEPS/openssl.tar.gz" \
-              "https://www.openssl.org/source/openssl-${version}.tar.gz"
+            if ! curl -fsSL --retry 3 -o "$XP_DEPS/openssl.tar.gz" \
+              "https://www.openssl.org/source/old/3.5/openssl-${version}.tar.gz"; then
+              curl -fsSL --retry 3 -o "$XP_DEPS/openssl.tar.gz" \
+                "https://www.openssl.org/source/openssl-${version}.tar.gz"
+            fi
           fi
           tar -xzf "$XP_DEPS/openssl.tar.gz" -C "$XP_DEPS"
           mv "$XP_DEPS/openssl-${version}" "$source_dir"
@@ -233,13 +248,18 @@ jobs:
             --openssldir="$prefix/ssl" \
             --cross-compile-prefix=i686-w64-mingw32- \
             -O2 -march=prescott -mtune=prescott -msse2 -msse3 -mno-ssse3 -mno-sse4 -mno-avx -mfpmath=sse -fcommon
-          make -j"$(nproc)" build_libs
+          if ! make -j"$(nproc)" build_libs > "$XP_DEPS/openssl-build.log" 2>&1; then
+            echo "::error::OpenSSL make build_libs failed; last 40 lines follow"
+            tail -n 40 "$XP_DEPS/openssl-build.log"
+            exit 1
+          fi
           make install_dev
 
           test -f "$prefix/include/openssl/ssl.h"
           test -f "$prefix/lib/libssl.a"
           test -f "$prefix/lib/libcrypto.a"
-          i686-w64-mingw32-nm "$prefix/lib/libcrypto.a" | grep -q 'TLS_client_method'
+          # TLS_client_method (the TLS 1.2/1.3 client API) is implemented in libssl, not libcrypto.
+          i686-w64-mingw32-nm "$prefix/lib/libssl.a" | grep -q 'TLS_client_method'
 
       - name: Build static libcurl for Windows XP
         run: |
@@ -316,7 +336,11 @@ jobs:
           # bcrypt.dll is Vista+; remove it so the final binary never imports it.
           sed -i 's/-lbcrypt//g' Makefile lib/Makefile
 
-          make -C lib -j"$(nproc)"
+          if ! make -C lib -j"$(nproc)" > "$XP_DEPS/curl-build.log" 2>&1; then
+            echo "::error::libcurl make failed; last 40 lines follow"
+            tail -n 40 "$XP_DEPS/curl-build.log"
+            exit 1
+          fi
           make -C lib install
           make -C include install
 
