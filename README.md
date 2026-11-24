@@ -7,115 +7,74 @@
 </p>
 
 <p align="center">
-  Play <b>Metroid: Zero Mission</b> natively on macOS, Windows and Linux.
+  A Windows XP SP3 (32-bit) compatibility branch of MetroZero, targeting Intel Pentium 4 Prescott.
 </p>
 
 <p align="center">
-  <a href="https://github.com/sweatyeggs69/MetroZero/actions/workflows/build.yml"><img alt="Build" src="https://github.com/sweatyeggs69/MetroZero/actions/workflows/build.yml/badge.svg"></a>
-  <a href="https://github.com/sweatyeggs69/MetroZero/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/sweatyeggs69/MetroZero?include_prereleases&label=release"></a>
+  <a href="https://github.com/quilterrantdean/MetroZero-XP/actions/workflows/build-windows-xp.yml"><img alt="Build Windows XP" src="https://github.com/quilterrantdean/MetroZero-XP/actions/workflows/build-windows-xp.yml/badge.svg?branch=windows-xp-pentium4"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
-  <img alt="Platforms" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-5b8def">
 </p>
 
 > [!IMPORTANT]
-> MetroZero does not include the game. You need your own legally dumped ROM of
-> **Metroid: Zero Mission (USA)**. MetroZero is an unofficial fan project, not affiliated with, endorsed or
-> sponsored by Nintendo. Metroid and all related names are trademarks of their respective owners.
+> This branch is an ongoing compatibility and build effort, not a claim that every feature has been verified on physical Windows XP hardware. Its CI cross-compiles and checks a 32-bit executable for the Windows XP API baseline. The packaged CI artifact still needs real-system testing.
+>
+> MetroZero does not include the game. You need your own legally dumped ROM of **Metroid: Zero Mission (USA)**. This is an unofficial fan project and is not affiliated with or endorsed by Nintendo. Metroid and related names are trademarks of their respective owners.
 
-## Download
+## What this branch is
 
-<a href="https://recomplauncher.com/game/metrozero"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg"></a>
+MetroZero is a native desktop application for playing *Metroid: Zero Mission*. This branch keeps the upstream application and concentrates on producing a build for **Windows XP SP3, x86 (32-bit), on a Pentium 4 Prescott-class CPU**.
 
-Or get the latest version for your system from the [Releases page](https://github.com/sweatyeggs69/MetroZero/releases/latest).
+The compatibility work is deliberately kept close to the upstream project: it uses a MinGW-w64 cross-toolchain with the XP 5.1 API baseline, a static build, and targeted compatibility patches for dependencies. The build workflow also checks the executable format, subsystem version, and imports for known post-XP APIs and non-system runtime DLLs.
 
-## Getting started
+This target is specific: Prescott's SSE3 is enabled. It is not intended for 64-bit Windows, earlier Pentium 4 variants without SSE3, or other legacy Windows versions. Builds and runtime behavior on actual XP machines remain an important part of validating this effort.
 
-1. **Open MetroZero** and click **Choose ROM...** to pick your dump. Only the USA release (game code
-   `BMXE`, revision 0) is supported. Trimmed and overdumped files, files with a 512-byte copier
-   header, and dumps whose header was rewritten by a fixer or flash-cart tool are cleaned up in
-   memory (your file is not changed), and then checked against the exact USA dump. Other regions,
-   betas, revisions and hacks are refused, and the launcher tells you which version you picked.
-   MetroZero only remembers where the file is. It never copies, uploads or changes it.
-2. **BIOS (optional).** No BIOS is needed. If you own a GBA BIOS dump, pick it in Settings > Game > BIOS
-   to see the original boot animation.
-3. **Press Play.** Next time, **Continue** picks up where you left off.
+## Getting a build
 
-## Controls
+There are no branch-specific release downloads yet. The CI workflow uploads a build artifact when it runs:
 
-| GBA      | Keyboard                  | Controller                        |
-| -------- | ------------------------- | --------------------------------- |
-| D-pad    | Arrow keys                | D-pad or left stick               |
-| A        | X                         | A (bottom) or Y (top) face button |
-| B        | Z                         | B (right) or X (left) face button |
-| L / R    | A / S                     | Shoulder buttons or triggers      |
-| Start    | Enter                     | Start                             |
-| Select   | Backspace or Right Shift  | Back                              |
+1. Open [Actions → Build Windows XP](https://github.com/quilterrantdean/MetroZero-XP/actions/workflows/build-windows-xp.yml).
+2. Select a successful run for the `windows-xp-pentium4` branch.
+3. Download the `MetroZero-Windows-XP-x86-Prescott` artifact and verify it with the included `SHA256SUMS.txt`. The artifact contains `MetroZero-<version>-Windows-XP-x86-Prescott.exe` and `cacert.pem` (the Mozilla CA bundle). Keep both files in the same folder.
 
-| Shortcut                | Keyboard            | Controller                |
-| ----------------------- | ------------------- | ------------------------- |
-| Settings menu           | F1 or Esc           |                           |
-| Fullscreen              | F11                 |                           |
-| Save state / load state | Page Up / Page Down | Back + R / Back + L       |
-| Save to a new slot      | F9                  | Back + D-pad Up           |
-| Previous / next slot    | F6 / F7             | Back + D-pad Left / Right |
-| Fast forward (hold)     | Tab                 | Right stick click         |
-| Rewind (hold)           | `` ` `` (backtick)    | Left stick click          |
+Artifacts are CI builds, not stable releases. Do not assume compatibility beyond the target and checks described above.
 
-Everything except F1, Esc and F11 can be rebound in F1 > Controls.
+## Running MetroZero
 
-Button names follow your controller's layout (Xbox, PlayStation or Nintendo). Connected controllers
-are printed to the terminal; if SDL doesn't know yours, add its layout to a `gamecontrollerdb.txt` in the
-settings folder.
+1. Run `MetroZero-<version>-Windows-XP-x86-Prescott.exe` on a compatible system. Keep `cacert.pem` next to the executable; online features (updates, achievements, badge images) verify certificates against it.
+2. Choose your legally dumped **Metroid: Zero Mission (USA)** ROM (`BMXE`, revision 0) in the app. The ROM is checked by the application; it is not included, copied, uploaded, or modified.
+3. A GBA BIOS is optional. Without one, the game can still be started.
 
-F1 > Controls also has Metroid extras, off until you set them up: a missile toggle, diagonal aim
-buttons, aiming with the right stick, and a one-button Morph Ball (press to morph, again to stand up).
+Saves, save states, and settings are stored in the user's application-data folder rather than alongside the executable. Keep backups when testing early builds.
 
-## Features
+## Current scope and direction
 
-- **Settings menu (F1)** for display (scaling, 16:10 and 16:9 widescreen, screen effects), sound volume, controls and more.
-- **Sharp at any resolution:** the launcher and menus follow your display scaling and grow with the window, from a small laptop to fullscreen 4K (Display > Menu size to adjust).
-- **Keyboard and controllers**, with full remapping and controller rumble (Controls > Rumble: on or off and strength).
-- **Save states**: ten slots with thumbnails. Quick save and load use Slot 1 unless you pick another.
-- **Fast forward and rewind**: fast forward at 2x or 4x, rewind up to the last 10 seconds.
-- **Cheats** (F1 > Cheats/Mods): unlimited health, missiles, super missiles and power bombs.
-- **Auto Morph Ball** (F1 > Cheats/Mods > Mods): run into a Morph Ball tunnel and Samus rolls in on her own.
-- **Redux Mode** (F1 > Cheats/Mods): optional quality-of-life tweaks, on together or one at a time: faster elevators,
-  an accurate clock, bomb jumps in liquids, a Morph Ball that rests when still, and no low health alarm. Inspired by
-  [Metroid Zero Mission Redux](https://github.com/ShadowOne333/Metroid-Zero-Mission-Redux) by ShadowOne333; applied
-  in memory, so your ROM file is never changed.
-- **RetroAchievements**, optional. Cheats, mods and rewind are off in hardcore mode.
-- **Import saves** from RetroArch, mGBA, VBA-M and others.
-- **Desktop shortcut** that starts the game directly (Settings > Game > Shortcut).
-- **Automatic updates** from this repository's releases, with your OK, without touching your saves.
+The goal is to maintain a buildable XP-specific target while tracking the upstream MetroZero application, and to make compatibility constraints explicit and testable in CI. Current work includes:
 
-## Saves
+- A 32-bit Windows cross-build targeting the XP SP3 subsystem and Pentium 4 Prescott/SSE3.
+- Static runtime and dependency configuration intended to avoid requiring bundled MinGW runtime DLLs.
+- CI checks for XP-incompatible API imports and selected dependency/API baseline settings.
+- Compatibility patches for SDL3 and rcheevos applied by the XP build workflow.
 
-Saves, save states and settings live in your user folder, never inside the app:
+The workflow verifies build-time properties; it cannot establish that the launcher, graphics, audio, input devices, networking, or every feature works correctly on all XP installations. Hardware testing and reports that include the XP service pack, CPU, GPU, and observed behavior are especially useful.
 
-- macOS: `~/Library/Application Support/MetroZero/MetroZero/`
-- Windows: `%APPDATA%\MetroZero\MetroZero\`
-- Linux: `~/.local/share/MetroZero/MetroZero/`
+## Building
 
-Settings > States > **Show save folder** opens it.
+The supported, repeatable build path is the [Windows XP GitHub Actions workflow](.github/workflows/build-windows-xp.yml). It runs on Ubuntu, installs an i686 MinGW-w64 POSIX toolchain, builds the required static dependencies, applies the XP compatibility patches, and produces the executable artifact.
 
-## Building from source
+The cross-toolchain configuration is in [`cmake/mingw32-xp-prescott.cmake`](cmake/mingw32-xp-prescott.cmake). It targets Windows 5.1 and `i686`, and enables Prescott/SSE3 instructions. Reproducing the build locally requires the corresponding MinGW-w64 packages and the dependency setup and patch steps from the workflow; a generic CMake build is not sufficient to produce this XP-targeted binary.
 
-You need CMake 3.24 or newer and a C++20 compiler. SDL3, Dear ImGui and the other libraries are
-downloaded during configure. On Linux, install SDL3's usual build packages first (the Linux job in
-[build.yml](.github/workflows/build.yml) lists them).
+## Networking on Windows XP
 
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-./build/metrozero
-```
+Windows XP SP3 cannot talk TLS 1.2 or later through its built-in stack (Schannel caps out at TLS 1.0, before SNI existed), so WinHTTP is not a reliable way to reach modern HTTPS endpoints on XP (observed: the RetroAchievements sign-in fails at the TLS handshake). This branch builds a static HTTPS transport instead of relying on the OS: statically linked **OpenSSL 3.x** and **libcurl** (both built for i686/Prescott in CI), compiled into the executable, covering the achievements sign-in, badge images and the update check. Certificates are always verified against `cacert.pem` (the Mozilla CA bundle) shipped next to the executable; set the `METROZERO_CACERT` environment variable to use a different bundle. If the bundle is missing, HTTPS requests fail with an explanatory error rather than silently skipping verification.
 
-## Contributing
+## Upstream project
 
-Bug reports and pull requests are welcome. Keep game content out of the repository: no ROMs, BIOS
-files, saves, save states, extracted assets or screenshots of the game.
+This repository is a fork of [MetroZero](https://github.com/sweatyeggs69/MetroZero). The upstream README describes the application and its controls and features; this branch's build and compatibility notes above take precedence for Windows XP.
+
+## Contributing and reporting XP results
+
+Bug reports and pull requests are welcome. For XP-specific reports, include the exact artifact or commit, Windows version/service pack, CPU model, graphics and audio hardware, and steps to reproduce. Do not commit ROMs, BIOS files, saves, save states, or other game content.
 
 ## License
 
-[MIT](LICENSE). Bundled open-source components and fonts are listed in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[MIT](LICENSE). Bundled open-source components and fonts are listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

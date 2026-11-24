@@ -9,7 +9,10 @@
 #include <utility>
 #include <vector>
 
-#ifdef _WIN32
+#if defined(METROZERO_STATIC_LIBCURL)
+#include <curl/curl.h>
+#include "app/tls_common.h"
+#elif defined(_WIN32)
 #include <windows.h>
 #include <winhttp.h>
 #else
@@ -40,7 +43,81 @@ State& state() {
 }
 constexpr int kMaxWorkers = 3;
 
-#ifdef _WIN32
+#if defined(METROZERO_STATIC_LIBCURL)
+// ---- static libcurl + OpenSSL (MetroZero-XP) --------------------------------------------------
+// libcurl and OpenSSL are linked statically (see cmake METROZERO_STATIC_LIBCURL). The transport
+// does not use Schannel, so TLS 1.2/1.3 works on Windows XP; certificates are verified against
+// the cacert.pem sitting next to MetroZero.exe (or METROZERO_CACERT).
+
+bool backend_ready() {
+    // Function-local static: initialised once, thread-safe.
+    static const bool ready = curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK;
+    return ready;
+}
+
+size_t static_write_cb(char* data, size_t size, size_t nmemb, void* user) {
+    if (size != 0 && nmemb > size_t(-1) / size) return 0;  // multiplication overflow
+    size_t real = size * nmemb;
+    if (real == 0) return 0;
+    static_cast<std::string*>(user)->append(data, real);
+    return real;
+}
+
+void perform(Job& job, const std::string& agent) {
+    Response& r = job.response;
+    CURL* h = curl_easy_init();
+    if (!h) {
+        r.error = "Could not start a network request";
+        return;
+    }
+    char errbuf[CURL_ERROR_SIZE] = {};
+    std::string why;
+    if (!tls::curl_use_ca_bundle(h, &why)) {
+        r.error = why;
+        curl_easy_cleanup(h);
+        return;
+    }
+    curl_easy_setopt(h, CURLOPT_URL, job.url.c_str());
+    curl_easy_setopt(h, CURLOPT_USERAGENT, agent.c_str());
+    curl_easy_setopt(h, CURLOPT_ERRORBUFFER, errbuf);
+    curl_easy_setopt(h, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(h, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(h, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(h, CURLOPT_MAXREDIRS, 10L);
+    curl_easy_setopt(h, CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(h, CURLOPT_REDIR_PROTOCOLS_STR, "https");
+    curl_easy_setopt(h, CURLOPT_SSL_SESSIONID_CACHE, 1L);
+    curl_easy_setopt(h, CURLOPT_TCP_KEEPALIVE, 1L);
+    curl_easy_setopt(h, CURLOPT_LOW_SPEED_LIMIT, 1L);
+    curl_easy_setopt(h, CURLOPT_LOW_SPEED_TIME, 60L);
+    curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, &static_write_cb);
+    curl_easy_setopt(h, CURLOPT_WRITEDATA, &r.body);
+    curl_slist* headers = nullptr;
+    if (!job.post.empty()) {
+        curl_easy_setopt(h, CURLOPT_POSTFIELDS, job.post.data());
+        curl_easy_setopt(h, CURLOPT_POSTFIELDSIZE, long(job.post.size()));
+        if (!job.content_type.empty()) {
+            std::string ct = "Content-Type: " + job.content_type;
+            headers = curl_slist_append(headers, ct.c_str());
+            curl_easy_setopt(h, CURLOPT_HTTPHEADER, headers);
+        }
+    }
+    CURLcode res = curl_easy_perform(h);
+    if (res == CURLE_OK) {
+        long code = 0;
+        curl_easy_getinfo(h, CURLINFO_RESPONSE_CODE, &code);
+        r.status = int(code);
+    } else {
+        r.error = std::string("Could not reach the server (") + tls::curl_error(res, errbuf) + ")";
+        r.body.clear();
+    }
+    if (headers) curl_slist_free_all(headers);
+    curl_easy_cleanup(h);
+}
+const char* backend() { return "libcurl+OpenSSL"; }
+
+#elif defined(_WIN32)
 // ---- WinHTTP ---------------------------------------------------------------------------------
 
 std::wstring widen(const std::string& s) {

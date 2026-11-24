@@ -9,7 +9,10 @@
 #include <sstream>
 #include <vector>
 
-#if defined(_WIN32)
+#if defined(METROZERO_STATIC_LIBCURL)
+#include <curl/curl.h>
+#include "app/tls_common.h"
+#elif defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -31,7 +34,29 @@ bool url_allowed(const std::string& url, const HttpOptions& o, std::string* erro
     return false;
 }
 
-#if defined(_WIN32)
+#if defined(METROZERO_STATIC_LIBCURL)
+// Streaming download state for the static libcurl backend.
+struct ProgressCtx {
+    const std::atomic<bool>* cancel;
+    const std::function<void(std::uint64_t, std::uint64_t)>* progress;
+    std::ofstream* out;
+    std::uint64_t expected_total = 0;
+    std::uint64_t done = 0;
+};
+
+size_t tls_write_cb(char* ptr, size_t size, size_t nmemb, void* user) {
+    if (size != 0 && nmemb > size_t(-1) / size) return 0;  // multiplication overflow
+    size_t n = size * nmemb;
+    auto* ctx = static_cast<ProgressCtx*>(user);
+    if (ctx->cancel && ctx->cancel->load()) return 0;  // abort the transfer
+    ctx->out->write(ptr, std::streamsize(n));
+    ctx->done += n;
+    if (ctx->progress) (*ctx->progress)(ctx->done, ctx->expected_total);
+    return n;
+}
+#endif
+
+#if defined(_WIN32) && !defined(METROZERO_STATIC_LIBCURL)
 
 std::wstring widen(const std::string& s) {
     if (s.empty()) return {};
@@ -69,7 +94,80 @@ bool http_download(const std::string& url, const fs::path& file, const HttpOptio
     if (!url_allowed(url, opt, error)) return false;
     std::error_code ec;
     fs::remove(file, ec);
-#if defined(_WIN32)
+#if defined(METROZERO_STATIC_LIBCURL)
+    // MetroZero-XP: HTTPS via statically linked libcurl+OpenSSL. Certificates are always
+    // verified against the cacert.pem next to MetroZero.exe (or METROZERO_CACERT).
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    if (!out) { if (error) *error = "Couldn't write the download to disk."; return false; }
+    ProgressCtx ctx{opt.cancel ? opt.cancel : nullptr, opt.progress ? &opt.progress : nullptr, &out,
+                    opt.expected_size, 0};
+    CURL* h = curl_easy_init();
+    if (!h) {
+        out.close();
+        fs::remove(file, ec);
+        if (error) *error = "Downloading updates failed to start libcurl.";
+        return false;
+    }
+    char errbuf[CURL_ERROR_SIZE] = {};
+    std::string why;
+    if (!tls::curl_use_ca_bundle(h, &why)) {
+        curl_easy_cleanup(h);
+        out.close();
+        fs::remove(file, ec);
+        if (error) *error = why;
+        return false;
+    }
+    curl_easy_setopt(h, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(h, CURLOPT_USERAGENT, opt.user_agent.c_str());
+    curl_easy_setopt(h, CURLOPT_ERRORBUFFER, errbuf);
+    curl_easy_setopt(h, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT, 20L);
+    curl_easy_setopt(h, CURLOPT_LOW_SPEED_LIMIT, 1L);
+    curl_easy_setopt(h, CURLOPT_LOW_SPEED_TIME, 60L);
+    curl_easy_setopt(h, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(h, CURLOPT_MAXREDIRS, 10L);
+    curl_easy_setopt(h, CURLOPT_PROTOCOLS_STR, "https");
+    curl_easy_setopt(h, CURLOPT_REDIR_PROTOCOLS_STR, "https");
+    curl_easy_setopt(h, CURLOPT_SSL_SESSIONID_CACHE, 1L);
+    curl_easy_setopt(h, CURLOPT_TCP_KEEPALIVE, 1L);
+    curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, &tls_write_cb);
+    curl_easy_setopt(h, CURLOPT_WRITEDATA, &ctx);
+    curl_slist* headers = nullptr;
+    if (!opt.accept.empty()) {
+        std::string accept = "Accept: " + opt.accept;
+        headers = curl_slist_append(nullptr, accept.c_str());
+        curl_easy_setopt(h, CURLOPT_HTTPHEADER, headers);
+    }
+    CURLcode res = curl_easy_perform(h);
+    long status = 0;
+    curl_easy_getinfo(h, CURLINFO_RESPONSE_CODE, &status);
+    if (headers) curl_slist_free_all(headers);
+    curl_easy_cleanup(h);
+    out.close();
+    if (!out) {
+        fs::remove(file, ec);
+        if (error) *error = "Couldn't write the download to disk.";
+        return false;
+    }
+    if (opt.status_out) *opt.status_out = int(status);
+    if (res == CURLE_ABORTED_BY_CALLBACK) {
+        fs::remove(file, ec);
+        if (error) *error = "Cancelled.";
+        return false;
+    }
+    if (res != CURLE_OK) {
+        fs::remove(file, ec);
+        if (error) *error = "Download failed (" + tls::curl_error(res, errbuf) + ").";
+        return false;
+    }
+    if (status != 200) {
+        fs::remove(file, ec);
+        if (error) *error = "The update server answered with HTTP " + std::to_string(status) + ".";
+        return false;
+    }
+    if (ctx.progress) (*ctx.progress)(ctx.done, ctx.expected_total);
+    return true;
+#elif defined(_WIN32)
     std::wstring wurl = widen(url);
     URL_COMPONENTS uc{};
     uc.dwStructSize = sizeof uc;
