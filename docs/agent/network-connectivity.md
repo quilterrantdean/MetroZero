@@ -1,6 +1,6 @@
 # Internet connectivity: the RetroAchievements sign-in failure
 
-Status: **diagnosis confirmed on the owner's XP machine (2026-11-24); TLS layer rewrite is the agreed direction. No code changed yet.** The RetroAchievements endpoint was probed from the owner's XP machine with OpenSSL s_client; everything except Schannel/WinHTTP works.
+Status: **diagnosis confirmed on the owner's XP machine (2026-11-24); TLS transport rewritten (static OpenSSL 3.x + libcurl); CI green (run 45485937027); owner sign-in test on XP SP3 passed 2026-11-24.** The RetroAchievements endpoint was probed from the owner's XP machine with OpenSSL s_client; everything except Schannel/WinHTTP works. The achievement-unlock path (in-game badge/event posting) has **not** been tested yet.
 
 ## TL;DR
 
@@ -89,7 +89,7 @@ The transport was rebuilt as described in "Reference solution":
 - `CMakeLists.txt`: `METROZERO_STATIC_LIBCURL` option (links libcurl+ssl+crypto+ws2_32/crypt32/advapi32/user32/gdi32 instead of winhttp), `METROZERO_TLS_ROOT` cache var.
 - Artifact layout: `MetroZero-<version>-Windows-XP-x86-Prescott.exe` + `cacert.pem`, both covered by SHA256SUMS.txt.
 
-Pending: CI verification of the new workflow steps; owner sign-in test on the XP machine.
+Verification (2026-11-24): CI run 45485937027 is fully green; the packaged artifact was downloaded and tested on the owner's physical XP SP3 machine and **RetroAchievements sign-in succeeded** (owner report, same day). Achievement unlock (in-game) and badge images were not exercised.
 
 ## References
 
