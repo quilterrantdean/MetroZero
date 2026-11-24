@@ -2,6 +2,8 @@
 
 Last verified: 2026-11-24, late (repository inspection; CI history via `gh`; XP hardware behaviour reported by the owner; local clone unshallowed 2026-11-24).
 
+**Update, same evening:** the owner approved the reconciliation (2026-11-24). PR #18 merged `windows-xp-pentium4` into `main`; PR #19 mirrored the agent docs into `windows-xp-pentium4`; PR #20 aligns `release-windows-xp.yml` with the XP pipeline. End state: the two branches are identical except for `.github/workflows/release-windows-xp.yml` (present only on `main`), by design. The `build-windows-xp.yml` concurrency group (`metrozero-windows-xp`) is shared by both branches, so a push on one branch can cancel an in-progress run on the other (observed: the `main` run for PR #18 was cancelled by the PR #19 push). Manual re-dispatch is the workaround today.
+
 ## Topology
 
 | Ref | SHA | Notes |
@@ -102,6 +104,6 @@ Done since then (2026-11-24): CI is green end-to-end (run 45485937027) and the o
 
 ## Open questions
 
-1. **Fork line reconciliation.** `windows-xp-pentium4` and `main` diverge on `release-windows-xp.yml` (release automation, PRs #9/#10, tag `v1.5.0-xp`). Owner decision (2026-11-24, not yet executed): merge `windows-xp-pentium4` into `main` and **keep** `release-windows-xp.yml`, **aligned with the XP pipeline** (static TLS deps, `METROZERO_STATIC_LIBCURL`, `cacert.pem` in the package, owner may also keep the `strip --strip-all` step), so upstream-following releases keep producing working XP builds. A dry-run merge is clean. Execution awaits the owner's explicit go-ahead. (Earlier note: `AGENTS.md`/`upstream-and-releases.md` record the release workflow as unwanted — update them after the decision is executed.)
+1. **Fork line reconciliation.** Executed 2026-11-24 (owner-approved): `windows-xp-pentium4` merged into `main` (PR #18); agent docs mirrored into `windows-xp-pentium4` (PR #19); `release-windows-xp.yml` kept on `main` and **aligned with the XP pipeline** (PR #20): static TLS deps (OpenSSL 3.5.2 + libcurl 8.11.0, cache-aware), `METROZERO_STATIC_LIBCURL=ON`, `cacert.pem` shipped in the zip, `strip --strip-all` retained, dependency cache retained (keys now include the workflow itself). `main` and `windows-xp-pentium4` differ only by `.github/workflows/release-windows-xp.yml`. The next upstream release will publish automatically (with the XP fix); a manual `force=true` dispatch would republish an existing tag (replaces the release) — that decision remains the owner's.
 2. **RetroAchievements on XP.** Decision (2026-11-24): rewrite the TLS transport following the Aurora `xp-port` recipe; OpenSSL 3.x first. Implemented and verified: CI green (run 45485937027) and the owner's on-machine sign-in works (2026-11-24). Pending: achievement-unlock verification; docs in `state.md` and `network-connectivity.md`.
 3. **Error message quality.** `src/app/http.cpp` reports raw WinHTTP decimal codes. Worth mapping `0x80090326` and friends to a one-line hint? Small, safe, but still a code change; awaiting approval.

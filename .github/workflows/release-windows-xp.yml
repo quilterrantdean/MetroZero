@@ -20,11 +20,16 @@ name: Release Windows XP (follow upstream)
 #
 # The build itself is the proven pipeline from build-windows-xp.yml (MinGW
 # POSIX threads with an XP API baseline, SDL3/rcheevos XP patches, PE32 /
-# subsystem 5.1 verification), with one optimization: the dependency tree
-# (.metrozero-xp-deps, including the SDL3 build) is cached across runs and
-# only rebuilt when a pinned version, patch, toolchain package or this
+# subsystem 5.1 verification), extended with the static TLS stack the XP build
+# needs (OpenSSL 3.x + libcurl, both built for i686/Prescott in CI) and the
+# Mozilla CA bundle shipped in the package as cacert.pem; certificates are
+# always verified against it. The dependency tree (.metrozero-xp-deps,
+# including the SDL3 build and the static TLS prefix) is cached across runs
+# and only rebuilt when a pinned version, patch, toolchain package or this
 # workflow changes. The cache is saved only after a successful build, so a
-# failed run can never poison later runs.
+# failed run can never poison later runs. The executable is stripped
+# (i686-w64-mingw32-strip --strip-all) before packaging; the XP push-build
+# workflow does not strip.
 
 on:
   schedule:
@@ -235,6 +240,18 @@ jobs:
           rm -rf "$XP_BUILD"
           mkdir -p "$XP_DEPS" "$XP_BUILD"
 
+
+      - name: Ensure unversioned MinGW compiler aliases
+        run: |
+          # The CI installs only the -posix MinGW variants, which ship no unversioned
+          # i686-w64-mingw32-gcc/g++ binaries. Build tools configured with a bare
+          # i686-w64-mingw32- cross prefix (OpenSSL) or --host expect those names.
+          sudo ln -sf /usr/bin/i686-w64-mingw32-gcc-posix /usr/local/bin/i686-w64-mingw32-gcc
+          sudo ln -sf /usr/bin/i686-w64-mingw32-g++-posix /usr/local/bin/i686-w64-mingw32-g++
+          sudo ln -sf /usr/bin/i686-w64-mingw32-cpp-posix /usr/local/bin/i686-w64-mingw32-cpp
+          i686-w64-mingw32-gcc --version | head -n 1
+          i686-w64-mingw32-g++ --version | head -n 1
+
       - name: Rebuild static winpthreads with Windows XP API baseline
         shell: bash
         run: |
@@ -389,6 +406,177 @@ jobs:
           test -f "$XP_DEPS/zlib-install/include/zlib.h"
           test -f "$XP_DEPS/zlib-install/lib/libz.a"
 
+
+      - name: Build static OpenSSL 3.x for Windows XP
+        run: |
+          set -euo pipefail
+
+          if [ -f "$XP_DEPS/openssl-3.5.2.stamp" ] && [ -f "$XP_DEPS/xp-tls/lib/libssl.a" ] && [ -f "$XP_DEPS/xp-tls/lib/libcrypto.a" ] && [ -f "$XP_DEPS/xp-tls/include/openssl/ssl.h" ]; then
+            echo "OpenSSL already in dependency cache; skipping rebuild."
+          else
+            source_dir="$XP_DEPS/openssl-src"
+            prefix="$XP_DEPS/xp-tls"
+            rm -rf "$source_dir" "$prefix" "$XP_DEPS/openssl.tar.gz"
+            rm -f "$XP_DEPS/curl-8.11.0.stamp"
+            mkdir -p "$prefix"
+
+            # Release tarball from the official GitHub release, with openssl.org as fallback
+            # (current releases live under /source/; previous ones move to /source/old/3.5/).
+            version="3.5.2"
+            if ! curl -fsSL --retry 3 -o "$XP_DEPS/openssl.tar.gz" \
+              "https://github.com/openssl/openssl/releases/download/openssl-${version}/openssl-${version}.tar.gz"; then
+              if ! curl -fsSL --retry 3 -o "$XP_DEPS/openssl.tar.gz" \
+                "https://www.openssl.org/source/old/3.5/openssl-${version}.tar.gz"; then
+                curl -fsSL --retry 3 -o "$XP_DEPS/openssl.tar.gz" \
+                  "https://www.openssl.org/source/openssl-${version}.tar.gz"
+              fi
+            fi
+            tar -xzf "$XP_DEPS/openssl.tar.gz" -C "$XP_DEPS"
+            mv "$XP_DEPS/openssl-${version}" "$source_dir"
+
+            cd "$source_dir"
+            perl Configure mingw \
+              no-shared \
+              no-tests \
+              no-asm \
+              no-dso \
+              no-engine \
+              no-capieng \
+              no-zlib \
+              -D_WIN32_WINNT=0x0501 \
+              -DWINVER=0x0501 \
+              --prefix="$prefix" \
+              --openssldir="$prefix/ssl" \
+              --cross-compile-prefix=i686-w64-mingw32- \
+              -O2 -march=prescott -mtune=prescott -msse2 -msse3 -mno-ssse3 -mno-sse4 -mno-avx -mfpmath=sse -fcommon
+            if ! make -j"$(nproc)" build_libs > "$XP_DEPS/openssl-build.log" 2>&1; then
+              echo "::error::OpenSSL make build_libs failed; last 40 lines follow"
+              tail -n 40 "$XP_DEPS/openssl-build.log"
+              exit 1
+            fi
+            make install_dev
+
+            test -f "$prefix/include/openssl/ssl.h"
+            test -f "$prefix/lib/libssl.a"
+            test -f "$prefix/lib/libcrypto.a"
+            # TLS_client_method (the TLS 1.2/1.3 client API) is implemented in libssl, not libcrypto.
+            i686-w64-mingw32-nm "$prefix/lib/libssl.a" | grep -q 'TLS_client_method'
+
+            touch "$XP_DEPS/openssl-3.5.2.stamp"
+          fi
+          # Assertions run on every build: a restored cache must be complete.
+          test -f "$XP_DEPS/xp-tls/include/openssl/ssl.h"
+          test -f "$XP_DEPS/xp-tls/lib/libssl.a"
+          test -f "$XP_DEPS/xp-tls/lib/libcrypto.a"
+          i686-w64-mingw32-nm "$XP_DEPS/xp-tls/lib/libssl.a" | grep -q 'TLS_client_method'
+
+      - name: Build static libcurl for Windows XP
+        run: |
+          set -euo pipefail
+
+          if [ -f "$XP_DEPS/curl-8.11.0.stamp" ] && [ -f "$XP_DEPS/xp-tls/lib/libcurl.a" ] && [ -f "$XP_DEPS/xp-tls/include/curl/curl.h" ]; then
+            echo "libcurl already in dependency cache; skipping rebuild."
+          else
+            version="8.11.0"
+            source_dir="$XP_DEPS/curl-src"
+            prefix="$XP_DEPS/xp-tls"
+            rm -rf "$source_dir" "$XP_DEPS/curl.tar.gz"
+
+            if ! curl -fsSL --retry 3 -o "$XP_DEPS/curl.tar.gz" \
+              "https://curl.se/download/curl-${version}.tar.gz"; then
+              curl -fsSL --retry 3 -o "$XP_DEPS/curl.tar.gz" \
+                "https://github.com/curl/curl/releases/download/curl-${version}/curl-${version}.tar.gz"
+            fi
+            tar -xzf "$XP_DEPS/curl.tar.gz" -C "$XP_DEPS"
+            mv "$XP_DEPS/curl-${version}" "$source_dir"
+
+            cd "$source_dir"
+            # Keep XP-incompatible OS APIs out: poll(), WSAPoll(), inet_pton(),
+            # inet_ntop(), if_nametoindex() do not exist on XP, so the configure
+            # checks are forced off and curl uses portable fallbacks.
+            export ac_cv_func_poll=no
+            export ac_cv_func_WSAPoll=no
+            export ac_cv_func_inet_pton=no
+            export ac_cv_func_inet_ntop=no
+            export ac_cv_func_if_nametoindex=no
+            export CPPFLAGS="-O2 -march=prescott -mtune=prescott -msse2 -msse3 -mno-ssse3 -mno-sse4 -mno-avx -mfpmath=sse -D_WIN32_WINNT=0x0501 -DWINVER=0x0501 -DCURL_STATICLIB -I$XP_DEPS/zlib-install/include"
+            export CFLAGS="$CPPFLAGS"
+            export LDFLAGS="-L$XP_DEPS/zlib-install/lib"
+            # curl's configure probes OpenSSL with bare -lssl -lcrypto; static OpenSSL on
+            # MinGW also needs these system libraries or every probe fails to link. This set
+            # matches OpenSSL's own LDLIBS (ws2_32 gdi32 crypt32) plus advapi32 (RtlGenRandom
+            # on XP, which is also what OpenSSL 3.x uses there with _WIN32_WINNT < 0x0600).
+            export LIBS="-lws2_32 -lgdi32 -lcrypt32 -ladvapi32"
+
+            ./configure \
+              --host=i686-w64-mingw32 \
+              --prefix="$prefix" \
+              --disable-shared \
+              --enable-static \
+              --enable-http \
+              --enable-ipv6 \
+              --disable-ftp \
+              --disable-file \
+              --disable-ldap \
+              --disable-ldaps \
+              --disable-rtsp \
+              --disable-dict \
+              --disable-telnet \
+              --disable-tftp \
+              --disable-pop3 \
+              --disable-imap \
+              --disable-smb \
+              --disable-smtp \
+              --disable-gopher \
+              --disable-mqtt \
+              --disable-docs \
+              --disable-manual \
+              --disable-ntlm \
+              --disable-sspi \
+              --disable-threaded-resolver \
+              --disable-websockets \
+              --disable-doh \
+              --disable-alt-svc \
+              --disable-hsts \
+              --without-libpsl \
+              --without-libidn2 \
+              --without-nghttp2 \
+              --without-brotli \
+              --without-zstd \
+              --without-schannel \
+              --without-ca-bundle \
+              --without-ca-path \
+              --with-openssl="$prefix" \
+              --with-zlib="$XP_DEPS/zlib-install"
+
+            # curl's configure adds -lbcrypt even with _WIN32_WINNT < 0x0600.
+            # bcrypt.dll is Vista+; remove it so the final binary never imports it.
+            sed -i 's/-lbcrypt//g' Makefile lib/Makefile
+
+            if ! make -C lib -j"$(nproc)" > "$XP_DEPS/curl-build.log" 2>&1; then
+              echo "::error::libcurl make failed; last 40 lines follow"
+              tail -n 40 "$XP_DEPS/curl-build.log"
+              exit 1
+            fi
+            make -C lib install
+            make -C include install
+
+            test -f "$prefix/include/curl/curl.h"
+            test -f "$prefix/lib/libcurl.a"
+
+            touch "$XP_DEPS/curl-8.11.0.stamp"
+          fi
+          test -f "$XP_DEPS/xp-tls/include/curl/curl.h"
+          test -f "$XP_DEPS/xp-tls/lib/libcurl.a"
+
+      - name: Download Mozilla CA bundle
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          curl -fsSL --retry 3 --connect-timeout 20 -o dist/cacert.pem "https://curl.se/ca/cacert.pem"
+          grep -q "BEGIN CERTIFICATE" dist/cacert.pem
+          wc -c dist/cacert.pem
+
       - name: Configure
         run: |
           cmake -S . -B "$XP_BUILD" -G Ninja \
@@ -419,6 +607,8 @@ jobs:
             -DHAVE_DXGI1_6_H:INTERNAL= \
             -DHAVE_SHELLSCALINGAPI_H:INTERNAL= \
             -DHAVE_WINDOWS_GAMING_INPUT_H:INTERNAL= \
+            -DMETROZERO_STATIC_LIBCURL=ON \
+            -DMETROZERO_TLS_ROOT="$XP_DEPS/xp-tls" \
             -DZLIB_INCLUDE_DIR="$XP_DEPS/zlib-install/include" \
             -DZLIB_LIBRARY_RELEASE="$XP_DEPS/zlib-install/lib/libz.a" \
             -DZLIB_LIBRARY_DEBUG="$XP_DEPS/zlib-install/lib/libz.a" \
@@ -453,7 +643,15 @@ jobs:
             "$XP_DEPS/fetchcontent/rcheevos-src"
 
       - name: Build
-        run: cmake --build "$XP_BUILD" --parallel 2
+        run: |
+          if ! cmake --build "$XP_BUILD" --parallel 2 > "$XP_DEPS/build.log" 2>&1; then
+            echo "::error::Build failed; compiler errors follow"
+            grep -i -E 'error' "$XP_DEPS/build.log" | tail -n 40 > "$XP_DEPS/build-errors.txt" || true
+            [ -s "$XP_DEPS/build-errors.txt" ] || tail -n 60 "$XP_DEPS/build.log" > "$XP_DEPS/build-errors.txt"
+            while IFS= read -r line; do printf '::error::%s\n' "${line%$'\r'}"; done < "$XP_DEPS/build-errors.txt"
+            exit 1
+          fi
+          tail -n 5 "$XP_DEPS/build.log"
 
       - name: Verify XP executable
         shell: bash
@@ -501,6 +699,7 @@ jobs:
               "GetLocaleInfoEx",
               "RegGetValueW",
               "GetThreadId",
+              "BCryptGenRandom",
           )
 
           found = [
@@ -516,7 +715,7 @@ jobs:
               dll for dll in dlls
               if re.search(
                   r"(libstdc\+\+|libgcc|libwinpthread|libatomic|"
-                  r"libssp|SDL3|zlib1|ucrtbase|vcruntime|msvcp)",
+                  r"libssp|SDL3|zlib1|ucrtbase|vcruntime|msvcp|bcrypt)",
                   dll,
                   re.I,
               )
@@ -550,9 +749,12 @@ jobs:
 
           exe="MetroZero-${version}-Windows-XP-x86-Prescott.exe"
           cp "$XP_BUILD/MetroZero.exe" "dist/$exe"
-          (cd dist && sha256sum "$exe" > SHA256SUMS.txt)
+          # cacert.pem was downloaded into dist/ in the CA bundle step; it must
+          # ship next to the exe (verification is mandatory in this build).
+          test -s dist/cacert.pem
+          (cd dist && sha256sum "$exe" cacert.pem > SHA256SUMS.txt)
           (cd dist && zip -9 "MetroZero-${version}-Windows-XP-x86-Prescott.zip" \
-            "$exe" SHA256SUMS.txt)
+            "$exe" cacert.pem SHA256SUMS.txt)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v6
@@ -607,6 +809,8 @@ jobs:
 
           {
             echo "**Unofficial Windows XP (32-bit) build** of [\`${TAG}\`](${url}) from \`${UPSTREAM}\`."
+            echo ""
+            echo "Statically linked OpenSSL 3.x and libcurl provide HTTPS on Windows XP (RetroAchievements included); certificates are verified against the bundled cacert.pem."
             echo ""
             echo "Requires 32-bit Windows XP SP3; Pentium 4 Prescott (\`-march=prescott\`, SSE3) and fully static. Changes: see the [upstream release notes](${url})."
           } > notes.md
