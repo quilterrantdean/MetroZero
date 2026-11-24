@@ -19,10 +19,10 @@ Two properties to be clear about:
 
 ## Release policy (owner decision, 2026-11)
 
-- Fork releases are **manual**, made by the owner from this repository.
-- `main` carries `.github/workflows/release-windows-xp.yml` (from the previous agent session, merged via PRs #9 and #10): polls upstream every 6 h, syncs the upstream tag with `GITHUB_TOKEN`, builds the XP binaries, and publishes a fork release with an `-xp` suffix (e.g. `v1.5.0-xp`). The owner has not asked to keep it; `windows-xp-pentium4` removes it along with the README rewrite describing the manual flow.
-- Do not re-enable it, do not imitate its pattern, and do not push release commits to `main` without the owner's explicit instruction.
-- XP release assets (when the owner cuts one) follow the CI artifact names: `MetroZero-<version>-Windows-XP-x86-Prescott.exe` plus `SHA256SUMS.txt`.
+- Fork releases are manual, made by the owner from this repository — **but the owner is reconsidering the automatic upstream-following workflow** (2026-11-24, see `docs/agent/state.md`, Open questions 1): the planned direction is to keep `release-windows-xp.yml` and align it with the XP pipeline (static OpenSSL/libcurl build steps, `METROZERO_STATIC_LIBCURL`, `cacert.pem` in the package; the `main` variant keeps `strip --strip-all`). Decision not yet executed; the bullet above describing the workflow as rejected is to be updated once executed.
+- `main` carries `.github/workflows/release-windows-xp.yml` (from the previous agent session, merged via PRs #9 and #10): polls upstream every 6 h, syncs the upstream tag with `GITHUB_TOKEN`, builds the XP binaries, and publishes a fork release with an `-xp` suffix (e.g. `v1.5.0-xp`). It predates the TLS rewrite and does **not** build the static stack or ship `cacert.pem`; a release published from it would not carry the sign-in fix.
+- Do not enable, modify or imitate it without the owner's explicit instruction. Do not push to `main` without the owner's explicit instruction.
+- XP release assets (whenever cut) follow the CI artifact names: `MetroZero-<version>-Windows-XP-x86-Prescott.exe` **plus `cacert.pem`**, covered by `SHA256SUMS.txt`.
 
 ## Syncing with upstream (manual, current practice)
 

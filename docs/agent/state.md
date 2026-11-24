@@ -1,17 +1,17 @@
 # State of the branch
 
-Last verified: 2026-11-24 (repository inspection plus CI history via `gh`; XP hardware behaviour reported by the owner).
+Last verified: 2026-11-24, late (repository inspection; CI history via `gh`; XP hardware behaviour reported by the owner; local clone unshallowed 2026-11-24).
 
 ## Topology
 
 | Ref | SHA | Notes |
 |---|---|---|
-| `arena/39655905-metrozero-xp` (this branch) | `4c6ec41` + this docs commit | Session branch for the agent-docs and network evaluation work. Based on `4c6ec41`. |
-| `windows-xp-pentium4` | `4c6ec41` | XP integration branch. Push trigger for `Build Windows XP`. README badge targets it. |
+| `arena/39655905-metrozero-xp` (this branch) | `086e6e9` (plus the docs commit that follows it) | Session branch; carries the agent docs commit recording the green run. |
+| `windows-xp-pentium4` | `574a37e` | XP integration branch; contains the TLS rewrite (PR #11) and all CI fixes (PRs #12-#17). Push trigger for `Build Windows XP`. |
 | `main` | `8779a7a` = tag `v1.5.0-xp` | Fork release line. Carries `.github/workflows/release-windows-xp.yml`. |
 | `v1.5.0-xp` (tag) | `8779a7a` | Latest fork release tag. |
 
-The local clone is shallow (grafted); ancestry between `main` and `windows-xp-pentium4` cannot be computed here. The two lines diverge on exactly two things (per `git diff main..4c6ec41`):
+The clone was unshallowed on 2026-11-24. The forks share history: merge-base(`main`, `windows-xp-pentium4`) = `53e2a69`; `windows-xp-pentium4` is 20 commits ahead (all the XP work), `main` is 4 commits ahead (the release workflow, PRs #9/#10). The files changed on each side do not intersect, and a dry-run merge into `main` (`git merge-tree --write-tree`, 2026-11-24) is clean (exit 0). The two lines diverge on exactly two things:
 
 - `main` adds `.github/workflows/release-windows-xp.yml`: builds the XP binaries from this fork and publishes a fork release whenever upstream publishes, syncing the upstream tag via `GITHUB_TOKEN`. Built by the previous agent session (PRs #8, #9, #10).
 - `windows-xp-pentium4` removes that workflow and rewrites the README accordingly.
@@ -64,6 +64,7 @@ Second failure (run on `2a65ca7`, after #12 merged): `Build static libcurl` fail
 - XP SP3 x86 build; launcher, menus, game runtime (Metroid: Zero Mission USA, BMXE rev 0).
 - CI build and all packaging checks, on both `main` and `windows-xp-pentium4`.
 - Update check against upstream: **GUI update notifications are real and work** (owner report, 2026-11-24): both "you are up to date" and new-release notices. The `--check-update` CLI flag was tested and works (2026-11-24).
+- **RetroAchievements sign-in works on the owner's physical XP SP3 machine** via the rebuilt static libcurl+OpenSSL transport (owner report, 2026-11-24). The achievement unlock path and badge images are not yet tested.
 
 ## Unverified / not wanted
 
@@ -78,11 +79,11 @@ TLS rewrite landed on branch `arena/39655905-metrozero-xp` (commits after `2b3fc
 
 Changed: new `src/app/tls_common.h` (cacert.pem discovery + curl error mapping), `src/app/http.cpp` (static backend `libcurl+OpenSSL` behind `METROZERO_STATIC_LIBCURL`; WinHTTP path kept for non-XP Windows builds), `src/update/http.cpp` (streaming `http_download` via static libcurl behind the same macro; POSIX curl-command path unchanged), `CMakeLists.txt` (new `METROZERO_STATIC_LIBCURL` option + `METROZERO_TLS_ROOT`), `.github/workflows/build-windows-xp.yml` (new OpenSSL 3.5.2 + curl 8.11.0 static build steps, cacert.pem download, PE checks extended with `BCryptGenRandom`/`bcrypt`), README (client install instructions, networking section), THIRD_PARTY_NOTICES (OpenSSL, libcurl), `.gitignore` (cacert.pem).
 
-Not yet done: CI verification of the workflow changes (both build workflows are manually disabled in the repo; needs the owner to re-enable `Build Windows XP`), and the owner's on-machine test of the sign-in. The XP build workflow triggers only on push to `main`/`windows-xp-pentium4`; for this branch use `gh workflow run build-windows-xp.yml --ref arena/39655905-metrozero-xp` after re-enabling it.
+Done since then (2026-11-24): CI is green end-to-end (run 45485937027) and the owner tested the artifact on the XP machine — sign-in works. Not yet done: verifying achievement unlock on the XP machine; deciding the `main` line (see Open questions). Artifact comparison: `build-windows-xp.yml` does **not** strip the exe (the `release-windows-xp.yml` on `main` strips with `i686-w64-mingw32-strip --strip-all`); both share the same `-O3 -flto --gc-sections` toolchain (`cmake/mingw32-xp-prescott.cmake`).
 
 ## Known issues
 
-- **RetroAchievements sign-in fails on XP** with `WinHTTP error 2148074278` (`0x80090326`, `SEC_E_ILLEGAL_MESSAGE`). Full evaluation and on-machine measurements in `network-connectivity.md`. Diagnosis confirmed 2026-11-24 on the owner's XP SP3 machine: OpenSSL 3.5.2 completes TLS 1.2 and 1.3 handshakes with `Verify return code: 0 (ok)` for both `retroachievements.org` and `api.github.com`; `--check-update` works from the CLI. The Schannel/WinHTTP client stack is the only broken link.
+- RetroAchievements sign-in was broken on XP (`WinHTTP error 2148074278`, `0x80090326`, `SEC_E_ILLEGAL_MESSAGE`); **fixed** by the static OpenSSL 3.x + libcurl transport and confirmed working on the owner's machine (2026-11-24). The Schannel/WinHTTP stack was the only broken link. Achievement-unlock verification pending.
 - GUI update notifications work (owner report); `--check-update` CLI confirmed working 2026-11-24 (`Up to date (latest release: 1.5.0).`).
 - Owner's browsing is via UXP-based browsers (New Moon 28, Mypal, Supermium); IE8 is not usable. UXP browsers carry their own TLS stack, which is why they work on XP.
 
@@ -101,6 +102,6 @@ Not yet done: CI verification of the workflow changes (both build workflows are 
 
 ## Open questions
 
-1. **Fork line reconciliation.** `windows-xp-pentium4` (README rewrite, no auto-release) and `main` (v1.5.0-xp, auto-release workflow) diverged. Which line is canonical going forward, and does the owner want a PR from `windows-xp-pentium4` into `main` to drop `release-windows-xp.yml`?
-2. **RetroAchievements on XP.** Decision (2026-11-24): rewrite the TLS transport following the Aurora `xp-port` recipe; OpenSSL 3.x first. Code is written (static libcurl+OpenSSL behind `METROZERO_STATIC_LIBCURL`, always-verify policy, both call sites, sidecar cacert.pem). Pending: CI verification, owner on-machine sign-in test. Docs in `state.md` and `network-connectivity.md`.
+1. **Fork line reconciliation.** `windows-xp-pentium4` and `main` diverge on `release-windows-xp.yml` (release automation, PRs #9/#10, tag `v1.5.0-xp`). Owner decision (2026-11-24, not yet executed): merge `windows-xp-pentium4` into `main` and **keep** `release-windows-xp.yml`, **aligned with the XP pipeline** (static TLS deps, `METROZERO_STATIC_LIBCURL`, `cacert.pem` in the package, owner may also keep the `strip --strip-all` step), so upstream-following releases keep producing working XP builds. A dry-run merge is clean. Execution awaits the owner's explicit go-ahead. (Earlier note: `AGENTS.md`/`upstream-and-releases.md` record the release workflow as unwanted — update them after the decision is executed.)
+2. **RetroAchievements on XP.** Decision (2026-11-24): rewrite the TLS transport following the Aurora `xp-port` recipe; OpenSSL 3.x first. Implemented and verified: CI green (run 45485937027) and the owner's on-machine sign-in works (2026-11-24). Pending: achievement-unlock verification; docs in `state.md` and `network-connectivity.md`.
 3. **Error message quality.** `src/app/http.cpp` reports raw WinHTTP decimal codes. Worth mapping `0x80090326` and friends to a one-line hint? Small, safe, but still a code change; awaiting approval.
