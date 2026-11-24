@@ -429,7 +429,9 @@ jobs:
         run: |
           if ! cmake --build "$XP_BUILD" --parallel 2 > "$XP_DEPS/build.log" 2>&1; then
             echo "::error::Build failed; compiler errors follow"
-            { grep -i -E 'error' "$XP_DEPS/build.log" || tail -n 60 "$XP_DEPS/build.log"; } | tail -n 60
+            grep -i -E 'error' "$XP_DEPS/build.log" | tail -n 40 > "$XP_DEPS/build-errors.txt" || true
+            [ -s "$XP_DEPS/build-errors.txt" ] || tail -n 60 "$XP_DEPS/build.log" > "$XP_DEPS/build-errors.txt"
+            while IFS= read -r line; do printf '::error::%s\n' "${line%$'\r'}"; done < "$XP_DEPS/build-errors.txt"
             exit 1
           fi
           tail -n 5 "$XP_DEPS/build.log"
