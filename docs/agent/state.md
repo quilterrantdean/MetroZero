@@ -42,6 +42,14 @@ Workflow `Build Windows XP` (`.github/workflows/build-windows-xp.yml`). Triggers
 - RetroAchievements online features: sign-in fails on the owner's machine; see `network-connectivity.md`.
 - The automatic release workflow on `main`: unwanted by the owner; treat as legacy until the reconciliation decision is made.
 
+## Implementation status (2026-11-24)
+
+TLS rewrite landed on branch `arena/39655905-metrozero-xp` (commits after `2b3fcc2`). OpenSSL version choice: **3.x first** (owner decision; falls back to 1.1.1w if the MinGW build fails). Verification policy: **always verify** against the shipped `cacert.pem`, no silent retry-without-verification (default of the unanswered question; owner did not object). Scope: **both** WinHTTP call sites. CA distribution: **sidecar** `cacert.pem` next to the exe (owner did not object).
+
+Changed: new `src/app/tls_common.h` (cacert.pem discovery + curl error mapping), `src/app/http.cpp` (static backend `libcurl+OpenSSL` behind `METROZERO_STATIC_LIBCURL`; WinHTTP path kept for non-XP Windows builds), `src/update/http.cpp` (streaming `http_download` via static libcurl behind the same macro; POSIX curl-command path unchanged), `CMakeLists.txt` (new `METROZERO_STATIC_LIBCURL` option + `METROZERO_TLS_ROOT`), `.github/workflows/build-windows-xp.yml` (new OpenSSL 3.5.2 + curl 8.11.0 static build steps, cacert.pem download, PE checks extended with `BCryptGenRandom`/`bcrypt`), README (client install instructions, networking section), THIRD_PARTY_NOTICES (OpenSSL, libcurl), `.gitignore` (cacert.pem).
+
+Not yet done: CI verification of the workflow changes (dispatched manually or on push), and the owner's on-machine test of the sign-in. The XP build workflow triggers only on push to `main`/`windows-xp-pentium4`; for this branch use `gh workflow run build-windows-xp.yml --ref arena/39655905-metrozero-xp`.
+
 ## Known issues
 
 - **RetroAchievements sign-in fails on XP** with `WinHTTP error 2148074278` (`0x80090326`, `SEC_E_ILLEGAL_MESSAGE`). Full evaluation and on-machine measurements in `network-connectivity.md`. Diagnosis confirmed 2026-11-24 on the owner's XP SP3 machine: OpenSSL 3.5.2 completes TLS 1.2 and 1.3 handshakes with `Verify return code: 0 (ok)` for both `retroachievements.org` and `api.github.com`; `--check-update` works from the CLI. The Schannel/WinHTTP client stack is the only broken link.
@@ -64,5 +72,5 @@ Workflow `Build Windows XP` (`.github/workflows/build-windows-xp.yml`). Triggers
 ## Open questions
 
 1. **Fork line reconciliation.** `windows-xp-pentium4` (README rewrite, no auto-release) and `main` (v1.5.0-xp, auto-release workflow) diverged. Which line is canonical going forward, and does the owner want a PR from `windows-xp-pentium4` into `main` to drop `release-windows-xp.yml`?
-2. **RetroAchievements on XP.** Direction agreed (2026-11-24): rewrite the TLS transport following the AuroraAssetEditor `xp-port` recipe. On-machine measurements done, diagnosis confirmed. Awaiting owner decisions (asked 2026-11-24): OpenSSL version for the static build (3.x vs 1.1.1w), certificate verification policy, scope (unify both HTTP call sites vs RA-only), and how `cacert.pem` ships (next to the exe vs embedded).
+2. **RetroAchievements on XP.** Decision (2026-11-24): rewrite the TLS transport following the Aurora `xp-port` recipe; OpenSSL 3.x first. Code is written (static libcurl+OpenSSL behind `METROZERO_STATIC_LIBCURL`, always-verify policy, both call sites, sidecar cacert.pem). Pending: CI verification, owner on-machine sign-in test. Docs in `state.md` and `network-connectivity.md`.
 3. **Error message quality.** `src/app/http.cpp` reports raw WinHTTP decimal codes. Worth mapping `0x80090326` and friends to a one-line hint? Small, safe, but still a code change; awaiting approval.

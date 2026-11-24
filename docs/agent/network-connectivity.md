@@ -78,6 +78,19 @@ Closest mapping for MetroZero: replace both WinHTTP call sites (`src/app/http.cp
 
 Owner note (2026-11-24): Update notifications in the GUI are real and work (both "up to date" and new upstream release notices). The `--check-update` CLI flag was not tested yet.
 
+## Implementation landed (2026-11-24)
+
+The transport was rebuilt as described in "Reference solution":
+
+- `src/app/tls_common.h` (new): resolves `cacert.pem` (env `METROZERO_CACERT` wins, else next to the executable), points curl at it, maps curl errors to user-facing reasons. HTTPS verification is mandatory; if the bundle is missing the request fails with an explanatory error instead of downgrading silently.
+- `src/app/http.cpp`: new static backend behind `METROZERO_STATIC_LIBCURL` (`libcurl+OpenSSL`), replacing WinHTTP on the XP build. POSIX dlopen and legacy WinHTTP paths remain for other platforms.
+- `src/update/http.cpp`: `http_download` via static libcurl (streaming, progress, cancel) behind the same macro. POSIX curl-command path unchanged.
+- `build-windows-xp.yml`: builds static OpenSSL 3.5.2 (`mingw`, `no-shared no-tests no-asm no-dso no-engine`, `-D_WIN32_WINNT=0x0501`, Prescott flags) and static libcurl 8.11.0 (HTTP/HTTPS only, XP API workaround for curl's configure checks), verifies TLS presence with `nm`, downloads `cacert.pem` (curl.se) into the artifact, and packages exe + `cacert.pem` + SHA256SUMS.txt. PE import checks extended with `BCryptGenRandom`/`bcrypt`.
+- `CMakeLists.txt`: `METROZERO_STATIC_LIBCURL` option (links libcurl+ssl+crypto+ws2_32/crypt32/advapi32/user32/gdi32 instead of winhttp), `METROZERO_TLS_ROOT` cache var.
+- Artifact layout: `MetroZero-<version>-Windows-XP-x86-Prescott.exe` + `cacert.pem`, both covered by SHA256SUMS.txt.
+
+Pending: CI verification of the new workflow steps; owner sign-in test on the XP machine.
+
 ## References
 
 - `src/app/http.cpp`, `src/update/http.cpp`, `src/app/achievements.cpp` (error display), `src/update/updater.cpp` (`kRepo = sweatyeggs69/MetroZero`).

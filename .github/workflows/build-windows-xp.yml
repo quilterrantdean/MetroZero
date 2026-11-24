@@ -199,6 +199,138 @@ jobs:
           cp "$zlib_static" "$XP_DEPS/zlib-install/lib/libz.a"
           test -f "$XP_DEPS/zlib-install/lib/libz.a"
 
+      - name: Build static OpenSSL 3.x for Windows XP
+        run: |
+          set -euo pipefail
+
+          version="3.5.2"
+          source_dir="$XP_DEPS/openssl-src"
+          prefix="$XP_DEPS/xp-tls"
+          rm -rf "$source_dir" "$prefix" "$XP_DEPS/openssl.tar.gz"
+          mkdir -p "$prefix"
+
+          # Release tarball from the official GitHub release, with the openssl.org mirror as fallback.
+          if ! curl -fsSL --retry 3 -o "$XP_DEPS/openssl.tar.gz" \
+            "https://github.com/openssl/openssl/releases/download/openssl-${version}/openssl-${version}.tar.gz"; then
+            curl -fsSL --retry 3 -o "$XP_DEPS/openssl.tar.gz" \
+              "https://www.openssl.org/source/openssl-${version}.tar.gz"
+          fi
+          tar -xzf "$XP_DEPS/openssl.tar.gz" -C "$XP_DEPS"
+          mv "$XP_DEPS/openssl-${version}" "$source_dir"
+
+          cd "$source_dir"
+          perl Configure mingw \
+            no-shared \
+            no-tests \
+            no-asm \
+            no-dso \
+            no-engine \
+            no-capieng \
+            no-zlib \
+            -D_WIN32_WINNT=0x0501 \
+            -DWINVER=0x0501 \
+            --prefix="$prefix" \
+            --openssldir="$prefix/ssl" \
+            --cross-compile-prefix=i686-w64-mingw32- \
+            -O2 -march=prescott -mtune=prescott -msse2 -msse3 -mno-ssse3 -mno-sse4 -mno-avx -mfpmath=sse -fcommon
+          make -j"$(nproc)" build_libs
+          make install_dev
+
+          test -f "$prefix/include/openssl/ssl.h"
+          test -f "$prefix/lib/libssl.a"
+          test -f "$prefix/lib/libcrypto.a"
+          i686-w64-mingw32-nm "$prefix/lib/libcrypto.a" | grep -q 'TLS_client_method'
+
+      - name: Build static libcurl for Windows XP
+        run: |
+          set -euo pipefail
+
+          version="8.11.0"
+          source_dir="$XP_DEPS/curl-src"
+          prefix="$XP_DEPS/xp-tls"
+          rm -rf "$source_dir" "$XP_DEPS/curl.tar.gz"
+
+          if ! curl -fsSL --retry 3 -o "$XP_DEPS/curl.tar.gz" \
+            "https://curl.se/download/curl-${version}.tar.gz"; then
+            curl -fsSL --retry 3 -o "$XP_DEPS/curl.tar.gz" \
+              "https://github.com/curl/curl/releases/download/curl-${version}/curl-${version}.tar.gz"
+          fi
+          tar -xzf "$XP_DEPS/curl.tar.gz" -C "$XP_DEPS"
+          mv "$XP_DEPS/curl-${version}" "$source_dir"
+
+          cd "$source_dir"
+          # Keep XP-incompatible OS APIs out: poll(), WSAPoll(), inet_pton(),
+          # inet_ntop(), if_nametoindex() do not exist on XP, so the configure
+          # checks are forced off and curl uses portable fallbacks.
+          export ac_cv_func_poll=no
+          export ac_cv_func_WSAPoll=no
+          export ac_cv_func_inet_pton=no
+          export ac_cv_func_inet_ntop=no
+          export ac_cv_func_if_nametoindex=no
+          export CPPFLAGS="-O2 -march=prescott -mtune=prescott -msse2 -msse3 -mno-ssse3 -mno-sse4 -mno-avx -mfpmath=sse -D_WIN32_WINNT=0x0501 -DWINVER=0x0501 -DCURL_STATICLIB -I$XP_DEPS/zlib-install/include"
+          export CFLAGS="$CPPFLAGS"
+          export LDFLAGS="-L$XP_DEPS/zlib-install/lib"
+
+          ./configure \
+            --host=i686-w64-mingw32 \
+            --prefix="$prefix" \
+            --disable-shared \
+            --enable-static \
+            --enable-http \
+            --enable-ipv6 \
+            --disable-ftp \
+            --disable-file \
+            --disable-ldap \
+            --disable-ldaps \
+            --disable-rtsp \
+            --disable-dict \
+            --disable-telnet \
+            --disable-tftp \
+            --disable-pop3 \
+            --disable-imap \
+            --disable-smb \
+            --disable-smtp \
+            --disable-gopher \
+            --disable-mqtt \
+            --disable-docs \
+            --disable-manual \
+            --disable-ntlm \
+            --disable-sspi \
+            --disable-threaded-resolver \
+            --disable-websockets \
+            --disable-doh \
+            --disable-alt-svc \
+            --disable-hsts \
+            --without-libpsl \
+            --without-libidn2 \
+            --without-nghttp2 \
+            --without-brotli \
+            --without-zstd \
+            --without-schannel \
+            --without-ca-bundle \
+            --without-ca-path \
+            --with-openssl="$prefix" \
+            --with-zlib="$XP_DEPS/zlib-install"
+
+          # curl's configure adds -lbcrypt even with _WIN32_WINNT < 0x0600.
+          # bcrypt.dll is Vista+; remove it so the final binary never imports it.
+          sed -i 's/-lbcrypt//g' Makefile lib/Makefile
+
+          make -C lib -j"$(nproc)"
+          make -C lib install
+          make -C include install
+
+          test -f "$prefix/include/curl/curl.h"
+          test -f "$prefix/lib/libcurl.a"
+
+      - name: Download Mozilla CA bundle
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          curl -fsSL --retry 3 --connect-timeout 20 -o dist/cacert.pem "https://curl.se/ca/cacert.pem"
+          grep -q "BEGIN CERTIFICATE" dist/cacert.pem
+          wc -c dist/cacert.pem
+
       - name: Configure
         run: |
           cmake -S . -B "$XP_BUILD" -G Ninja \
@@ -229,6 +361,8 @@ jobs:
             -DHAVE_DXGI1_6_H:INTERNAL= \
             -DHAVE_SHELLSCALINGAPI_H:INTERNAL= \
             -DHAVE_WINDOWS_GAMING_INPUT_H:INTERNAL= \
+            -DMETROZERO_STATIC_LIBCURL=ON \
+            -DMETROZERO_TLS_ROOT="$XP_DEPS/xp-tls" \
             -DZLIB_INCLUDE_DIR="$XP_DEPS/zlib-install/include" \
             -DZLIB_LIBRARY_RELEASE="$XP_DEPS/zlib-install/lib/libz.a" \
             -DZLIB_LIBRARY_DEBUG="$XP_DEPS/zlib-install/lib/libz.a" \
@@ -311,6 +445,7 @@ jobs:
               "GetLocaleInfoEx",
               "RegGetValueW",
               "GetThreadId",
+              "BCryptGenRandom",
           )
 
           found = [
@@ -326,7 +461,7 @@ jobs:
               dll for dll in dlls
               if re.search(
                   r"(libstdc\+\+|libgcc|libwinpthread|libatomic|"
-                  r"libssp|SDL3|zlib1|ucrtbase|vcruntime|msvcp)",
+                  r"libssp|SDL3|zlib1|ucrtbase|vcruntime|msvcp|bcrypt)",
                   dll,
                   re.I,
               )
@@ -349,12 +484,14 @@ jobs:
           mkdir -p dist
           cp "$XP_BUILD/MetroZero.exe" \
             "dist/MetroZero-${version}-Windows-XP-x86-Prescott.exe"
-          sha256sum dist/MetroZero-*.exe | tee dist/SHA256SUMS.txt
+          test -s dist/cacert.pem
+          sha256sum dist/MetroZero-*.exe dist/cacert.pem | tee dist/SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v6
         with:
           name: MetroZero-Windows-XP-x86-Prescott
           path: |
             dist/MetroZero-*-Windows-XP-x86-Prescott.exe
+            dist/cacert.pem
             dist/SHA256SUMS.txt
           if-no-files-found: error

@@ -125,10 +125,41 @@ A few interface icons (play, settings, log out and similar), embedded in the pro
 small font. https://lucide.dev. Licensed under the ISC License; the full text is in
 `assets/fonts/Lucide-LICENSE.txt` in the source and in the `licenses` folder of each download.
 
+## OpenSSL 3.x
+
+TLS/HTTPS support, linked statically in the Windows XP build. https://www.openssl.org
+Licensed under the Apache License 2.0.
+
+```
+Copyright 2019-2025 The OpenSSL Project Authors. All Rights Reserved.
+
+Licensed under the Apache License 2.0 (the "License"). You may not use this file except
+in compliance with the License. You can obtain a copy of the License at
+https://www.openssl.org/source/license.html
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations under the License.
+```
+
+## libcurl
+
+HTTPS transport, linked statically in the Windows XP build. https://curl.se
+
+```
+Copyright (C) 1996 - 2025, Daniel Stenberg, daniel@haxx.se, and many contributors, see the AUTHORS file.
+
+This software is licensed as described in the file COPYING, which you should have received as part of this
+distribution. The terms are also available at https://curl.se/docs/copyright.html
+```
+
+The full license text (MIT/X derivate) ships in `COPYING` in the libcurl source and is MIT-style
+permissive; see https://curl.se/docs/copyright.html.
+
 ## zlib
 
-Used to compress save states: the operating system's zlib on macOS and Linux, and a
-statically linked zlib (from vcpkg) on Windows. https://zlib.net
+Used to compress save states and to support the updater's zip extraction: the operating system's zlib on macOS and Linux, and a statically linked zlib (built from source) in the Windows XP build. https://zlib.net
 
 ```
 Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler

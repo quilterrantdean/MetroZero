@@ -31,3 +31,6 @@ screenshots/
 
 # FetchContent downloads (CI and local builds)
 .deps/
+
+# CA bundle downloaded by CI (not committed; shipped in the XP artifact)
+cacert.pem

@@ -17,7 +17,9 @@ Windows XP SP3 (x86, Intel Pentium 4 Prescott) compatibility branch of **MetroZe
 
 - CI `Build Windows XP` is green on `windows-xp-pentium4` and on `main`.
 - Update check against upstream (`--check-update`) reported working by the owner on real XP hardware.
-- RetroAchievements sign-in **fails** on the owner's XP machine (WinHTTP error 2148074278 = `0x80090326`, `SEC_E_ILLEGAL_MESSAGE`, TLS handshake). See `docs/agent/network-connectivity.md`.
+- RetroAchievements sign-in **failed** on the owner's XP machine with WinHTTP error 2148074278 (`0x80090326`). The TLS layer is being rebuilt (static OpenSSL 3.x + libcurl, no Schannel); code written 2026-11-24, awaiting CI verification and the owner's on-machine sign-in test. See `docs/agent/network-connectivity.md`.
+- Update check: GUI notifications work; `--check-update` CLI also confirmed working (2026-11-24).
+- XP artifact now ships `MetroZero-<version>-Windows-XP-x86-Prescott.exe` plus `cacert.pem` (both covered by SHA256SUMS.txt). The exe requires `cacert.pem` next to it.
 - In-app install of updates: untested, not wanted. Releases are made manually by the owner from this repo.
 
 ## Hard rules
