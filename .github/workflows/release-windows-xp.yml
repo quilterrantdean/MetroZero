@@ -1,0 +1,626 @@
+name: Release Windows XP (follow upstream)
+
+# Builds the Windows XP (x86, Pentium 4 Prescott) binaries from this fork and
+# publishes them as a release here whenever sweatyeggs69/MetroZero publishes a
+# new release.
+#
+# Why a schedule: GitHub does not let one repository's workflow trigger
+# another's (there is no cross-repository workflow trigger), so this polls the
+# upstream releases every 6 hours — the same pattern as fluidsynth-XP.
+#
+# Before building, the workflow syncs the upstream release tag into the branch
+# it runs on (merge + push using GITHUB_TOKEN), so the fork always uses the
+# latest upstream release without any manual sync. Pushes made with
+# GITHUB_TOKEN do not trigger other workflows, so this does not re-run
+# build-windows-xp.yml; that workflow keeps handling ordinary push builds
+# unchanged.
+#
+# Release tags carry an "-xp" suffix (v1.5.0 -> v1.5.0-xp) so they never
+# collide with upstream tags.
+#
+# The build itself is the proven pipeline from build-windows-xp.yml (MinGW
+# POSIX threads with an XP API baseline, SDL3/rcheevos XP patches, PE32 /
+# subsystem 5.1 verification), with one optimization: the dependency tree
+# (.metrozero-xp-deps, including the SDL3 build) is cached across runs and
+# only rebuilt when a pinned version, patch, toolchain package or this
+# workflow changes. The cache is saved only after a successful build, so a
+# failed run can never poison later runs.
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Upstream tag to release (empty = latest published)"
+        required: false
+        default: ""
+      force:
+        description: "Rebuild and replace the release even if it already exists"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Distinct from build-windows-xp.yml's group (metrozero-windows-xp) so the two
+# workflows never cancel each other. Never cancel a release build mid-flight.
+concurrency:
+  group: metrozero-xp-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: sweatyeggs69/MetroZero
+  XP_DEPS: ${{ github.workspace }}/.metrozero-xp-deps
+  XP_BUILD: ${{ github.workspace }}/.metrozero-xp-build
+
+jobs:
+  check:
+    name: Check upstream release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.up.outputs.tag }}
+      release_tag: ${{ steps.up.outputs.release_tag }}
+      build: ${{ steps.up.outputs.build }}
+    steps:
+      - name: Resolve release to build
+        id: up
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${INPUT_TAG:-}" ]; then
+            if ! [[ "$INPUT_TAG" =~ ^[A-Za-z0-9._-]+$ ]]; then
+              echo "::error::Invalid tag: $INPUT_TAG"
+              exit 1
+            fi
+            tag="v${INPUT_TAG#v}"
+            skip=$(gh api "repos/$UPSTREAM/releases/tags/$tag" --jq '.prerelease or .draft') || {
+              echo "::error::$tag is not a published release in $UPSTREAM"
+              exit 1
+            }
+            if [ "$skip" != false ]; then
+              echo "::error::$tag is a pre-release or draft"
+              exit 1
+            fi
+          else
+            tag=$(gh api "repos/$UPSTREAM/releases/latest" --jq '.tag_name') || {
+              echo "::error::No published release found in $UPSTREAM"
+              exit 1
+            }
+          fi
+
+          release_tag="${tag}-xp"
+
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [ "${FORCE:-}" != "true" ]; then
+            build=false
+            echo "Release $release_tag already exists; nothing to do."
+          else
+            build=true
+            echo "Will build and publish $release_tag (upstream $tag)."
+          fi
+
+          {
+            echo "tag=$tag"
+            echo "release_tag=$release_tag"
+            echo "build=$build"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build Windows XP (x86, Pentium 4 Prescott)
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.sync.outputs.sha }}
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - name: Check out the fork
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Sync upstream release into ${{ github.ref_name }}
+        id: sync
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          echo "Syncing ${UPSTREAM}@${TAG} into ${GITHUB_REF_NAME}..."
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch --no-tags "https://github.com/${UPSTREAM}.git" "refs/tags/${TAG}"
+          upstream_sha=$(git rev-parse 'FETCH_HEAD^{commit}')
+
+          if git merge-base --is-ancestor "$upstream_sha" HEAD; then
+            echo "Fork already contains ${TAG}; no sync needed."
+          else
+            if ! git merge --no-edit -m "Merge upstream release ${TAG}" "$upstream_sha"; then
+              git merge --abort || true
+              echo "::error::Merge conflict while syncing ${UPSTREAM}@${TAG} into ${GITHUB_REF_NAME}. Merge upstream manually, resolve the conflicts, then re-run this workflow."
+              exit 1
+            fi
+            echo "Pushing sync merge to ${GITHUB_REF_NAME}..."
+            if ! git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"; then
+              echo "::error::Could not push the sync merge to ${GITHUB_REF_NAME} (branch protection?). Allow GitHub Actions to push to this branch, or merge ${UPSTREAM} manually, then re-run this workflow."
+              exit 1
+            fi
+            echo "Synced ${TAG} into ${GITHUB_REF_NAME}."
+          fi
+
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tree version matches the release tag
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          version=$(sed -n 's/^project(metrozero LANGUAGES C CXX VERSION \([0-9.]*\)).*/\1/p' CMakeLists.txt)
+          if [ -z "$version" ]; then
+            echo "::error::Could not read the project version from CMakeLists.txt"
+            exit 1
+          fi
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Synced tree declares project version v${version}, but the release tag is ${TAG}. Refusing to build a release whose tag would not match the binaries."
+            exit 1
+          fi
+          echo "Tree is at v${version}, matching upstream release ${TAG}."
+
+      - name: Install MinGW-w64 cross-compiler
+        timeout-minutes: 10
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
+          printf 'deb http://archive.ubuntu.com/ubuntu noble main universe\ndeb http://archive.ubuntu.com/ubuntu noble-updates main universe\ndeb http://security.ubuntu.com/ubuntu noble-security main universe\n' | sudo tee /etc/apt/sources.list
+          apt_opts=(-o Acquire::ForceIPv4=true -o Acquire::Retries=2 -o Acquire::http::Timeout=30)
+          installed=false
+          for attempt in 1 2 3; do
+            if sudo apt-get "${apt_opts[@]}" update && sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends \
+              gcc-mingw-w64-i686-posix g++-mingw-w64-i686-posix binutils-mingw-w64-i686; then
+              installed=true
+              break
+            fi
+            echo "APT failed (attempt $attempt), retrying in 15 seconds"
+            sleep 15
+          done
+          test "$installed" = true
+          cmake --version
+          ninja --version
+          i686-w64-mingw32-gcc-posix --version
+          i686-w64-mingw32-g++-posix --version
+          i686-w64-mingw32-g++-posix -march=prescott -Q --help=target 2>&1 |
+            grep -E '^[[:space:]]*-msse3[[:space:]]+\[enabled\]'
+
+      - name: Compute dependency cache key
+        id: depskey
+        run: |
+          set -euo pipefail
+
+          # Everything that must invalidate the dependency cache, minus the
+          # project() line: a version-only bump (every upstream release) does
+          # not change the dependencies, so it must not force a rebuild. The
+          # cross-toolchain versions are included because GCC LTO bytecode is
+          # not compatible across compiler versions. No `head` here: with
+          # pipefail a closed pipe would fail the step (SIGPIPE).
+          digest="$(
+            {
+              grep -v '^project(metrozero' CMakeLists.txt
+              i686-w64-mingw32-gcc-posix -dumpfullversion
+              i686-w64-mingw32-ld --version
+            } | sha256sum | cut -d' ' -f1
+          )"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Restore dependency cache
+        id: deps-cache
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.XP_DEPS }}
+          key: xp-deps-${{ runner.os }}-${{ steps.depskey.outputs.digest }}-${{ hashFiles('cmake/**', '.github/workflows/release-windows-xp.yml') }}
+
+      - name: Prepare build directories
+        run: |
+          set -euo pipefail
+          # XP_DEPS is cache-backed and must survive; XP_BUILD is always fresh.
+          rm -rf "$XP_BUILD"
+          mkdir -p "$XP_DEPS" "$XP_BUILD"
+
+      - name: Rebuild static winpthreads with Windows XP API baseline
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          source_dir="$XP_DEPS/mingw-w64-src/mingw-w64-libraries/winpthreads"
+          if [ -f "$XP_DEPS/mingw-w64-v11.0.1.stamp" ] && [ -s "$source_dir/src/misc.c" ]; then
+            echo "mingw-w64 source already in dependency cache; skipping clone."
+          else
+            rm -rf "$XP_DEPS/mingw-w64-src"
+            git clone --depth 1 --branch v11.0.1 \
+              https://github.com/mingw-w64/mingw-w64.git \
+              "$XP_DEPS/mingw-w64-src"
+            touch "$XP_DEPS/mingw-w64-v11.0.1.stamp"
+          fi
+          test -s "$source_dir/src/misc.c"
+
+          archive="$(i686-w64-mingw32-gcc-posix -print-file-name=libwinpthread.a)"
+          if [ ! -f "$archive" ]; then
+            archive="$(find /usr -type f -name libwinpthread.a -print -quit)"
+          fi
+          test -n "$archive"
+          test -f "$archive"
+
+          work="$XP_DEPS/winpthreads-xp"
+          mkdir -p "$work"
+
+          i686-w64-mingw32-gcc-posix -O2 -Wall -DWIN32_LEAN_AND_MEAN \
+            -D_WIN32_WINNT=0x0501 -DWINVER=0x0501 \
+            -DIN_WINPTHREAD -DWINPTHREAD_DBG=1 -D__USE_MINGW_ANSI_STDIO=0 \
+            -I"$source_dir/include" -I"$source_dir/src" \
+            -march=prescott -mtune=prescott -msse3 \
+            -c "$source_dir/src/misc.c" -o "$work/misc.o"
+          test -s "$work/misc.o"
+
+          i686-w64-mingw32-nm -u "$work/misc.o" |
+            tee "$work/misc.undefined.txt"
+          if grep -q 'GetTickCount64' "$work/misc.undefined.txt"; then
+            echo "::error::The XP-built winpthreads object references GetTickCount64."
+            exit 1
+          fi
+
+          member="libwinpthread_la-misc.o"
+          lib_dir="$(dirname "$archive")"
+          patched_archives=0
+
+          for candidate in "$lib_dir/libwinpthread.a" "$lib_dir/libpthread.a"; do
+            [ -f "$candidate" ] || continue
+            i686-w64-mingw32-ar t "$candidate" |
+              grep -Fxq "$member" || continue
+
+            echo "Replacing $member in $candidate"
+            sudo i686-w64-mingw32-ar d "$candidate" "$member"
+            sudo i686-w64-mingw32-ar r "$candidate" "$work/misc.o"
+            sudo i686-w64-mingw32-ranlib "$candidate"
+
+            if i686-w64-mingw32-nm -A -u "$candidate" |
+              grep -q 'GetTickCount64'; then
+              echo "::error::Patched archive still references GetTickCount64: $candidate"
+              exit 1
+            fi
+            patched_archives=$((patched_archives + 1))
+          done
+
+          test "$patched_archives" -gt 0
+          echo "Patched $patched_archives static pthread archive(s)."
+
+      - name: Verify MinGW POSIX threading and static runtime
+        run: |
+          cat > "$RUNNER_TEMP/mingw-thread-test.cpp" <<'EOF'
+          #include <condition_variable>
+          #include <mutex>
+          #include <thread>
+
+          int main() {
+              std::mutex mutex;
+              std::condition_variable condition;
+              bool ready = false;
+
+              std::thread worker([&] {
+                  {
+                      std::lock_guard<std::mutex> lock(mutex);
+                      ready = true;
+                  }
+                  condition.notify_one();
+              });
+
+              {
+                  std::unique_lock<std::mutex> lock(mutex);
+                  condition.wait(lock, [&] { return ready; });
+              }
+
+              worker.join();
+              return 0;
+          }
+          EOF
+
+          i686-w64-mingw32-g++-posix -std=c++20 -pthread -static \
+            -march=prescott -DWINVER=0x0501 -D_WIN32_WINNT=0x0501 \
+            "$RUNNER_TEMP/mingw-thread-test.cpp" \
+            -o "$RUNNER_TEMP/mingw-thread-test.exe"
+
+          imports="$RUNNER_TEMP/mingw-thread-test.imports.txt"
+          i686-w64-mingw32-objdump -p "$RUNNER_TEMP/mingw-thread-test.exe" |
+            tee "$imports"
+
+          if grep -Ei 'DLL Name:.*winpthread|GetTickCount64' "$imports"; then
+            echo "::error::The XP threading smoke test is incompatible."
+            exit 1
+          fi
+
+      - name: Build native icon generator
+        run: |
+          mkdir -p "$XP_DEPS/host-tools"
+          g++ -std=c++20 -O2 \
+            tools/metrozero_icon/main.cpp \
+            -o "$XP_DEPS/host-tools/metrozero_icon"
+
+      - name: Build static zlib for Win32
+        run: |
+          set -euo pipefail
+
+          if [ -f "$XP_DEPS/zlib-v1.3.1.stamp" ] && [ -f "$XP_DEPS/zlib-install/lib/libz.a" ]; then
+            echo "zlib already in dependency cache; skipping rebuild."
+          else
+            rm -rf "$XP_DEPS/zlib-src" "$XP_DEPS/zlib-build" "$XP_DEPS/zlib-install"
+            git clone --depth 1 --branch v1.3.1 \
+              https://github.com/madler/zlib.git \
+              "$XP_DEPS/zlib-src"
+
+            cmake -S "$XP_DEPS/zlib-src" -B "$XP_DEPS/zlib-build" -G Ninja \
+              -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/cmake/mingw32-xp-prescott.cmake" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DZLIB_BUILD_EXAMPLES=OFF \
+              -DCMAKE_INSTALL_PREFIX="$XP_DEPS/zlib-install"
+
+            cmake --build "$XP_DEPS/zlib-build" --parallel 2
+            cmake --install "$XP_DEPS/zlib-build"
+
+            zlib_static="$(
+              find "$XP_DEPS/zlib-install" -type f \
+                -name 'libzlibstatic.a' -print -quit
+            )"
+            test -n "$zlib_static"
+
+            mkdir -p "$XP_DEPS/zlib-install/lib"
+            cp "$zlib_static" "$XP_DEPS/zlib-install/lib/libz.a"
+            touch "$XP_DEPS/zlib-v1.3.1.stamp"
+          fi
+
+          # Assertions run on every build: a restored cache must be complete.
+          test -f "$XP_DEPS/zlib-install/include/zlib.h"
+          test -f "$XP_DEPS/zlib-install/lib/libz.a"
+
+      - name: Configure
+        run: |
+          cmake -S . -B "$XP_BUILD" -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/cmake/mingw32-xp-prescott.cmake" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFETCHCONTENT_BASE_DIR="$XP_DEPS/fetchcontent" \
+            -DMETROZERO_HOST_ICON_TOOL="$XP_DEPS/host-tools/metrozero_icon" \
+            -DMETROZERO_VENDOR_SDL=ON \
+            -DMETROZERO_BUILD_TOOLS=OFF \
+            -DMETROZERO_BUILD_TESTS=OFF \
+            -DSDL_SHARED=OFF \
+            -DSDL_STATIC=ON \
+            -DSDL_TEST_LIBRARY=OFF \
+            -DSDL_TESTS=OFF \
+            -DSDL_EXAMPLES=OFF \
+            -DSDL_AVX=OFF \
+            -DSDL_AVX2=OFF \
+            -DSDL_AVX512F=OFF \
+            -DSDL_SSE4_1=OFF \
+            -DSDL_SSE4_2=OFF \
+            -DSDL_RENDER_D3D11=OFF \
+            -DSDL_RENDER_D3D12=OFF \
+            -DSDL_RENDER_GPU=OFF \
+            -DSDL_VULKAN=OFF \
+            -DSDL_WASAPI=OFF \
+            -DSDL_CAMERA=OFF \
+            -DSDL_SENSOR=OFF \
+            -DHAVE_DXGI1_6_H:INTERNAL= \
+            -DHAVE_SHELLSCALINGAPI_H:INTERNAL= \
+            -DHAVE_WINDOWS_GAMING_INPUT_H:INTERNAL= \
+            -DZLIB_INCLUDE_DIR="$XP_DEPS/zlib-install/include" \
+            -DZLIB_LIBRARY_RELEASE="$XP_DEPS/zlib-install/lib/libz.a" \
+            -DZLIB_LIBRARY_DEBUG="$XP_DEPS/zlib-install/lib/libz.a" \
+            -DZLIB_USE_STATIC_LIBS=ON
+
+      - name: Verify SDL Windows API baseline
+        run: |
+          config="$(
+            find "$XP_DEPS/fetchcontent/sdl3-build" \
+              -path '*/build_config/SDL_build_config.h' \
+              -print -quit
+          )"
+          test -n "$config"
+          echo "SDL config: $config"
+
+          if grep -Eq '^#define (HAVE_DXGI1_6_H|HAVE_SHELLSCALINGAPI_H|HAVE_WINDOWS_GAMING_INPUT_H)[[:space:]]+1' "$config"; then
+            echo "::error::SDL enabled a post-XP Windows API or controller backend."
+            grep -E 'HAVE_DXGI1_6_H|HAVE_SHELLSCALINGAPI_H|HAVE_WINDOWS_GAMING_INPUT_H' "$config"
+            exit 1
+          fi
+
+          grep -E 'HAVE_DXGI1_6_H|HAVE_SHELLSCALINGAPI_H|HAVE_WINDOWS_GAMING_INPUT_H' "$config"
+
+      - name: Patch SDL3 pen-input code for Windows XP
+        run: |
+          python3 cmake/patches/patch_sdl3_windows_xp.py \
+            "$XP_DEPS/fetchcontent/sdl3-src"
+
+      - name: Patch rcheevos secure CRT selection for Windows XP
+        run: |
+          python3 cmake/patches/patch_rcheevos_windows_xp.py \
+            "$XP_DEPS/fetchcontent/rcheevos-src"
+
+      - name: Build
+        run: cmake --build "$XP_BUILD" --parallel 2
+
+      - name: Verify XP executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe="$XP_BUILD/MetroZero.exe"
+          test -s "$exe"
+
+          pe_file="$(i686-w64-mingw32-objdump -f "$exe")"
+          echo "$pe_file"
+          grep -q 'pei-i386' <<<"$pe_file"
+
+          pe_info="$(i686-w64-mingw32-objdump -p "$exe")"
+          grep -E 'Subsystem|MajorSubsystemVersion|MinorSubsystemVersion' <<<"$pe_info"
+          grep -Eq 'Subsystem[[:space:]]+00000002[[:space:]]+\(Windows GUI\)' <<<"$pe_info"
+          grep -Eq 'MajorSubsystemVersion[[:space:]]+5([[:space:]]|$)' <<<"$pe_info"
+          grep -Eq 'MinorSubsystemVersion[[:space:]]+1([[:space:]]|$)' <<<"$pe_info"
+
+          python3 - "$exe" <<'PY'
+          import re
+          import subprocess
+          import sys
+
+          exe = sys.argv[1]
+          data = subprocess.check_output(
+              ["i686-w64-mingw32-objdump", "-p", exe],
+              text=True,
+              errors="replace",
+          )
+
+          xp_incompatible = (
+              "SHGetKnownFolderPath",
+              "GetTickCount64",
+              "InitializeCriticalSectionEx",
+              "GetFinalPathNameByHandleW",
+              "GetFileInformationByHandleEx",
+              "CancelIoEx",
+              "GetQueuedCompletionStatusEx",
+              "SetThreadErrorMode",
+              "CreateSymbolicLinkW",
+              "GetSystemTimePreciseAsFileTime",
+              "GetActiveProcessorCount",
+              "GetLogicalProcessorInformationEx",
+              "GetUserDefaultLocaleName",
+              "GetLocaleInfoEx",
+              "RegGetValueW",
+              "GetThreadId",
+          )
+
+          found = [
+              name for name in xp_incompatible
+              if re.search(r"\b" + re.escape(name) + r"\b", data)
+          ]
+          if found:
+              print("Windows XP-incompatible imports detected:", ", ".join(found))
+              sys.exit(1)
+
+          dlls = re.findall(r"^\s*DLL Name: (.+)$", data, flags=re.MULTILINE)
+          runtime_dlls = [
+              dll for dll in dlls
+              if re.search(
+                  r"(libstdc\+\+|libgcc|libwinpthread|libatomic|"
+                  r"libssp|SDL3|zlib1|ucrtbase|vcruntime|msvcp)",
+                  dll,
+                  re.I,
+              )
+          ]
+          if runtime_dlls:
+              print("Non-system runtime DLL imports detected:", ", ".join(runtime_dlls))
+              sys.exit(1)
+
+          print("PE32 / XP subsystem / import checks passed.")
+          PY
+
+      - name: Package
+        id: package
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          version="$(
+            sed -n 's/^project(metrozero LANGUAGES C CXX VERSION \([0-9.]*\)).*/\1/p' \
+              CMakeLists.txt
+          )"
+          test -n "$version"
+          test "v$version" = "$TAG"
+
+          mkdir -p dist
+          # The build is already -O3/-flto with --gc-sections and no -g; the
+          # COFF symbol table is the only removable weight left.
+          before=$(stat -c %s "$XP_BUILD/MetroZero.exe")
+          i686-w64-mingw32-strip --strip-all "$XP_BUILD/MetroZero.exe"
+          after=$(stat -c %s "$XP_BUILD/MetroZero.exe")
+          echo "MetroZero.exe: $before bytes -> $after bytes after strip"
+
+          exe="MetroZero-${version}-Windows-XP-x86-Prescott.exe"
+          cp "$XP_BUILD/MetroZero.exe" "dist/$exe"
+          (cd dist && sha256sum "$exe" > SHA256SUMS.txt)
+          (cd dist && zip -9 "MetroZero-${version}-Windows-XP-x86-Prescott.zip" \
+            "$exe" SHA256SUMS.txt)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: MetroZero-Windows-XP-x86-Prescott
+          path: dist/MetroZero-*-Windows-XP-x86-Prescott.zip
+          if-no-files-found: error
+
+      - name: Save dependency cache
+        if: success() && steps.deps-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.XP_DEPS }}
+          key: xp-deps-${{ runner.os }}-${{ steps.depskey.outputs.digest }}-${{ hashFiles('cmake/**', '.github/workflows/release-windows-xp.yml') }}
+
+  release:
+    name: Publish release
+    needs: [check, build]
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows XP artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: MetroZero-Windows-XP-x86-Prescott
+          path: dist
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.check.outputs.tag }}
+          RELEASE_TAG: ${{ needs.check.outputs.release_tag }}
+          FORCE: ${{ inputs.force }}
+          SYNCED_SHA: ${{ needs.build.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          gh api "repos/$UPSTREAM/releases/tags/$TAG" > up.json
+          name=$(jq -r '.name // empty' up.json); [ -n "$name" ] || name="$TAG"
+          url=$(jq -r '.html_url' up.json)
+
+          shopt -s nullglob
+          zips=(dist/MetroZero-*.zip)
+          if [ "${#zips[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one packaged zip in dist/, found ${#zips[@]}"
+            exit 1
+          fi
+
+          {
+            echo "**Unofficial Windows XP (32-bit) build** of [\`${TAG}\`](${url}) from \`${UPSTREAM}\`."
+            echo ""
+            echo "Requires 32-bit Windows XP SP3; Pentium 4 Prescott (\`-march=prescott\`, SSE3) and fully static. Changes: see the [upstream release notes](${url})."
+          } > notes.md
+
+          if [ "${FORCE:-}" = "true" ]; then
+            gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          fi
+
+          latest_up=$(gh api "repos/$UPSTREAM/releases/latest" --jq '.tag_name')
+          if [ "$TAG" = "$latest_up" ]; then latest=true; else latest=false; fi
+
+          gh release create "$RELEASE_TAG" "${zips[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SYNCED_SHA" \
+            --title "$name" \
+            --notes-file notes.md \
+            --latest="$latest"
