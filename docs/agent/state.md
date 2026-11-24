@@ -38,10 +38,13 @@ Consequences:
 
 | Run | Branch | Result |
 |---|---|---|
+| 45471067148 (2026-11-24) | `windows-xp-pentium4` (PR #11 merged) | failure at "Build static OpenSSL 3.x for Windows XP" (see notes) |
 | 45267513841 (2026-11-23) | `main` (merge PR #9) | success |
 | 45188943130 (2026-11-23) | `windows-xp-pentium4` ("Rewrite README for Windows XP branch") | success |
 | 45183600579 (2026-11-23) | `windows-xp-pentium4` | success |
 | 45106037641 | `main` | failure, 0s (superseded by 45107056511) |
+
+Failure of 45471067148 and fix (2026-11-24, `6122237`): only the `-posix` MinGW variants are installed (no unversioned `i686-w64-mingw32-gcc/g++`), so a bare cross prefix had no compiler; the OpenSSL sanity check also looked for `TLS_client_method` in `libcrypto.a` instead of `libssl.a`. Fixed with unversioned aliases in `/usr/local/bin`, `nm` on `libssl.a`, an `/source/old/3.5/` tarball fallback, and `::error::` tails of the build logs. Job logs cannot be fetched from the agent sandbox (signed URLs blocked), so diagnosis relied on reproduction of the `Configure`/`make` path locally.
 
 ## Works (owner-reported or CI-observed)
 
