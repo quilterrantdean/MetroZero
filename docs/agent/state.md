@@ -33,7 +33,7 @@ Workflow `Build Windows XP` (`.github/workflows/build-windows-xp.yml`). Triggers
 
 - XP SP3 x86 build; launcher, menus, game runtime (Metroid: Zero Mission USA, BMXE rev 0).
 - CI build and all packaging checks, on both `main` and `windows-xp-pentium4`.
-- Update check against upstream (`--check-update`, equivalent to the Updates tab check path): reported working on the owner's XP machine, 2026-11-24.
+- Update check against upstream: **GUI update notifications are real and work** (owner report, 2026-11-24): both "you are up to date" and new-release notices. The `--check-update` CLI flag was not tested yet.
 
 ## Unverified / not wanted
 
@@ -44,7 +44,14 @@ Workflow `Build Windows XP` (`.github/workflows/build-windows-xp.yml`). Triggers
 
 ## Known issues
 
-- **RetroAchievements sign-in fails on XP** with `WinHTTP error 2148074278` (`0x80090326`, `SEC_E_ILLEGAL_MESSAGE`). Full evaluation in `network-connectivity.md`. No code change made yet.
+- **RetroAchievements sign-in fails on XP** with `WinHTTP error 2148074278` (`0x80090326`, `SEC_E_ILLEGAL_MESSAGE`). Full evaluation in `network-connectivity.md`. The owner's goal (2026-11-24) is a rewrite of the TLS code following the AuroraAssetEditor `xp-port` recipe (static OpenSSL 1.1.1w + static libcurl 8.11.0, `cacert.pem` shipped, TLS 1.2 minimum). No code changed yet; owner testing plan pending (see chat, 2026-11-24).
+
+## Owner context (2026-11-24)
+
+- Real XP SP3 machine in use (the developer machine, not a VM).
+- The owner has OpenSSL already compiled on that machine.
+- Update notifications in the GUI are real and working (owner-verified); the `--check-update` CLI flag is untested.
+- Reference solution reviewed: `xp-port/` in [quilterrantdean/AuroraAssetEditor](https://github.com/quilterrantdean/AuroraAssetEditor) (working XP TLS 1.2/1.3 transport).
 
 ## Decisions (owner)
 
@@ -55,5 +62,5 @@ Workflow `Build Windows XP` (`.github/workflows/build-windows-xp.yml`). Triggers
 ## Open questions
 
 1. **Fork line reconciliation.** `windows-xp-pentium4` (README rewrite, no auto-release) and `main` (v1.5.0-xp, auto-release workflow) diverged. Which line is canonical going forward, and does the owner want a PR from `windows-xp-pentium4` into `main` to drop `release-windows-xp.yml`?
-2. **RetroAchievements on XP.** Attempt the OS-level TLS 1.2 mitigation (see `network-connectivity.md`), document RA as unavailable on XP, or invest in bundling a TLS stack? No code changed until the owner chooses.
+2. **RetroAchievements on XP.** Direction agreed (2026-11-24): rewrite the TLS transport following the AuroraAssetEditor `xp-port` recipe. Awaiting owner test results (clock, OpenSSL `s_client` handshake, cacert.pem validation) before code work, and the decision on shipping `cacert.pem` next to the exe plus the retry-without-verify fallback for drifted XP clocks.
 3. **Error message quality.** `src/app/http.cpp` reports raw WinHTTP decimal codes. Worth mapping `0x80090326` and friends to a one-line hint? Small, safe, but still a code change; awaiting approval.

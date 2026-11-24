@@ -1,6 +1,6 @@
 # Internet connectivity: the RetroAchievements sign-in failure
 
-Status: **evaluation only; no code changed.** Last verified 2026-11-24. Evidence: owner's screenshot of the Achievements settings tab on Windows XP (`Could not sign in: Could not reach the server (WinHTTP error 2148074278)`), plus code inspection. This sandbox cannot reach `retroachievements.org` (egress blocked), so the endpoint side was not probed from here.
+Status: **evaluation done; rewrite of the TLS layer is the agreed direction (owner decision, 2026-11-24). No code changed yet.** Last verified 2026-11-24. Evidence: owner's screenshot of the Achievements settings tab on Windows XP (`Could not sign in: Could not reach the server (WinHTTP error 2148074278)`), plus code inspection. This sandbox cannot reach `retroachievements.org` (egress blocked), so the endpoint side was not probed from here.
 
 ## TL;DR
 
@@ -50,21 +50,27 @@ To discriminate on the machine:
 - Sign-in errors surface in the tab as red text; the toggle stays usable; the game runs regardless; badge failures mark badges `Failed` and retry next run; offline events post "kept and sent when the connection is back" only after a session was live.
 - No crash, no data loss, no blocking prompt. This is the correct degradation and should survive any fix.
 
-## Options
+## Decision (owner, 2026-11-24)
 
-| # | Option | Cost | Outcome | Recommendation |
-|---|---|---|---|---|
-| 1 | OS-level TLS 1.2 enablement (POSReady KB4019276 + registry/`inetcpl.cpl`) | OS changes on one machine; reversible | May let RA sign-in complete on that machine | **Try first.** Zero app risk. |
-| 2 | Document RA as unavailable on XP | Docs only | Honest; consistent with README's "networking unverified" stance | Accept if option 1 fails or the machine is retail XP. |
-| 3 | Map common Schannel codes in `src/app/http.cpp` (`SEC_E_ILLEGAL_MESSAGE`, `SEC_E_UNTRUSTED_ROOT`, ...) to one-line hints | ~30 lines, one function | Owner and other XP users get an actionable message instead of a raw number | Do regardless, if a code change is approved. |
-| 4 | Bundle a static TLS stack (e.g. mbedTLS) or link curl-with-OpenSSL on XP | New dependency, patch surface, binary size, maintenance against the XP baseline; weakens the "thin WinHTTP" design | TLS independent of the OS | **Not recommended now.** Only if verified RA on XP becomes a hard requirement. |
-| 5 | Local TLS-terminating proxy on another machine | Operational burden per user | Works around Schannel | Not recommended for end users. |
-
-Non-goals: do not remove achievements from the XP build; do not switch the RA client to plain HTTP (rcheevos refuses non-HTTPS and it would expose credentials); do not "fix" the updater, which works.
+The transport will be rebuilt following the AuroraAssetEditor `xp-port` recipe (static OpenSSL + static libcurl, `cacert.pem` shipped next to the exe, XP/Prescott flags, TLS 1.2 minimum). The earlier table (options 1 to 5) is kept for context; the chosen route corresponds to the previously-listed option 4, now possible because the owner has a working XP TLS stack to build against and an in-repo reference design. OS-level enablement (option 1) remains a valid zero-code mitigation to try, independently of the rewrite.
 
 ## If a code change is approved later (option 3 sketch)
 
 In `src/app/http.cpp::perform` (WinHTTP branch), after a failed send/receive, translate a small set of `GetLastError()` values before formatting the message: `0x80090326` → "TLS handshake failed (this Windows version may not support the server's TLS)", `0x80090325` → "certificate not trusted", `0x80072F8F` → "secure connection failed". Keep the raw code in parentheses. Mirror nothing in `src/update/http.cpp` unless asked; the updater already maps its own codes.
+
+## Reference solution: the owner's AuroraAssetEditor XP port (verified 2026-11-24)
+
+Repository: [quilterrantdean/AuroraAssetEditor](https://github.com/quilterrantdean/AuroraAssetEditor), folder `xp-port/`. Read it before rewriting; it is a working XP SP3 TLS 1.2/1.3 transport built by the same owner for the same target (i686, Pentium 4 Prescott, subsystem 5.01).
+
+Their design (observed in `xp-port/`):
+
+- `build-tls.sh`: builds `zlib 1.3.1`, `OpenSSL 1.1.1w` (`no-shared no-tests no-asm no-dso no-engine no-capieng`) and `libcurl 8.11.0` (static, HTTP/HTTPS only) for i686 with `-march=prescott -mtune=prescott -msse2 -msse3 -mno-ssse3 -mno-avx -mfpmath=sse`, PE subsystem 5.01. Runs in CI on Linux with the MinGW cross-compiler (same toolchain family as this repo's XP workflow), or on MSYS2 MINGW32 locally.
+- `aurora_tls.c`: a small native client over static libcurl. TLS 1.2 by default, TLS 1.3 when the stack supports it; `cacert.pem` resolved next to the `.exe` (fallback: next to the DLL); certificate errors (typical on XP with a dead CMOS battery and a drifted clock) get **one retry without verification**, remembered for the process; a shared `CURLSH*` with per-lock-data critical sections for DNS/TLS-session/connection reuse.
+- `verify-xp.ps1`: PE audit (PE32, subsystem 5.01, allowlist of XP system DLLs, blocklist of post-XP instructions/APIs) plus a real HTTPS/TLS 1.3 smoke test against `https://archive.org` from 32-bit PowerShell.
+
+Closest mapping for MetroZero: replace both WinHTTP call sites (`src/app/http.cpp` and `src/update/http.cpp`) with static libcurl + OpenSSL built the same way, ship `cacert.pem` next to `MetroZero.exe`, keep the rest of the HTTP/UI code unchanged. The two files are independent implementations today; the rewrite unifies the transport.
+
+Owner note (2026-11-24): Update notifications in the GUI are real and work (both "up to date" and new upstream release notices). The `--check-update` CLI flag was not tested yet.
 
 ## References
 
