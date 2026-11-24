@@ -44,6 +44,15 @@ Consequences:
 | 45183600579 (2026-11-23) | `windows-xp-pentium4` | success |
 | 45106037641 | `main` | failure, 0s (superseded by 45107056511) |
 
+**Build is green** (run 45485937027, 2026-11-24 21:00 UTC, on `fbab41b` after PRs #13–#17): Configure → Build → "Verify XP executable" (PE baseline checks) → Package → artifact `MetroZero-Windows-XP-x86-Prescott` (~5.5 MB, exe + cacert.pem + SHA256SUMS). The exe uses the static libcurl+OpenSSL 3.x stack with mandatory certificate verification.
+
+Failures fixed on the way (2026-11-24, all merged to `windows-xp-pentium4`):
+- PR #13 (`e3cd3f3`): libcurl `configure` could not detect OpenSSL (`--with-openssl was given but OpenSSL could not be detected`; probes link bare `-lssl -lcrypto`). Fix: `LIBS="-lws2_32 -lgdi32 -lcrypt32 -ladvapi32"` in the libcurl step.
+- PR #14 (`40ca6ff`): CMake `Configure` failed with `METROZERO_CURL_INCLUDE_DIR was not found` — the XP toolchain sets `CMAKE_FIND_ROOT_PATH_MODE_LIBRARY/INCLUDE` to `ONLY`, excluding absolute `METROZERO_TLS_ROOT` hints. Fix: `NO_CMAKE_FIND_ROOT_PATH` on the find calls; reproduced locally (cmake 4.4.5) before fixing.
+- PR #15/#16 (`da71eae`, `3b8923b`): the `Build` step logged nothing on failure; now dumps the compiler errors as `::error::` annotations (readable via the check-runs API; job logs are not fetchable from the agent sandbox).
+- PR #17 (`91b89cf`): `/usr/bin/i686-w64-mingw32-ld: undefined reference to '_imp__curl_easy_strerror'` — MinGW's curl.h defaults to `__declspec(dllimport)`; fix: `add_compile_definitions(CURL_STATICLIB)` in the `METROZERO_STATIC_LIBCURL` block.
+- OpenSSL 3.x confirmed not to reference `BCryptGenRandom` on the XP target (`USE_BCRYPTGENRANDOM` requires MSVC and `_WIN32_WINNT >= 0x0600`); RNG uses the CryptoAPI (`CryptAcquireContextW`/`CryptGenRandom`, advapi32), available on XP.
+
 Failure of 45480616721 (2026-11-24, `8f444a3` / PR #13 merged): the libcurl fix worked — `Build static libcurl for Windows XP` passed — but `Configure` failed: the XP toolchain file sets `CMAKE_FIND_ROOT_PATH_MODE_LIBRARY/INCLUDE` to `ONLY`, which excludes the absolute `METROZERO_TLS_ROOT` hints, so CMake reported `METROZERO_CURL_INCLUDE_DIR was not found` and could not configure. Reproduced locally with the same toolchain semantics and fixed by adding `NO_CMAKE_FIND_ROOT_PATH` to the find calls in `CMakeLists.txt` (verified: find succeeds with the same settings).
 
 Failure of 45471067148 and fix (2026-11-24, `6122237`): the OpenSSL sanity check looked for `TLS_client_method` in `libcrypto.a` instead of `libssl.a`; that was the failing command. (The `-posix` update-alternatives do provide the unversioned `i686-w64-mingw32-gcc/g++` names, as the 20:11 run shows; the unversioned-alias step is redundant but harmless.)
