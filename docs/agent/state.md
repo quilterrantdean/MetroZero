@@ -1,6 +1,14 @@
 # State of the branch
 
-Last verified: 2026-11-24, late (repository inspection; CI history via `gh`; XP hardware behaviour reported by the owner; local clone unshallowed 2026-11-24).
+Last verified: 2026-11-26 (release runs and build history via `gh`; SDL patch regression tests locally; XP runtime behaviour reported by the owner).
+
+## Release follow-up (2026-11-26)
+
+- PR #22 integrated upstream v1.6.1 into `main`, taking the upstream README while preserving XP changes. Build run 45903938960 succeeded; the owner reports the executable looks good in their testing.
+- Release runs #11–#13 (45908274993, 45909156479, 45909485159) all passed sync/version validation but failed at the SDL XP patch step; publication was skipped. Changing the tag or `force` does not address this failure. Full job logs remain inaccessible from this sandbox.
+- Reproduced a cache-reuse bug on pinned SDL 3.2.26: the first patch succeeds, the second fails with `original=1, patched=1` because guarded replacements contain the original text. The release workflow caches sources; the ordinary build starts clean. The fix counts originals outside patched blocks and wraps the pointer-event region only once, preserving legacy cached guards.
+- Validation: five offline regression tests plus repeated application to real clean and legacy-patched SDL 3.2.26 sources. Both XP workflows run the regression suite before patching. Full CI build/publication still needs validation after merging this fix. Patch changes also invalidate the release dependency cache through its existing `cmake/**` hash.
+- Release automation is owner-approved and active: scheduled or manual execution builds and publishes a missing upstream release. `force` permits replacing an existing release; it does not clear dependency caches. Historical policy/topology notes below describe earlier states.
 
 **Update, same evening:** the owner approved the reconciliation (2026-11-24). PR #18 merged `windows-xp-pentium4` into `main`; PR #19 mirrored the agent docs into `windows-xp-pentium4`; PR #20 aligns `release-windows-xp.yml` with the XP pipeline. End state: the two branches are identical except for `.github/workflows/release-windows-xp.yml` (present only on `main`), by design. The `build-windows-xp.yml` concurrency group (`metrozero-windows-xp`) is shared by both branches, so a push on one branch can cancel an in-progress run on the other (observed: the `main` run for PR #18 was cancelled by the PR #19 push). Manual re-dispatch is the workaround today.
 

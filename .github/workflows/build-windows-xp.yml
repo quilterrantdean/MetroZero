@@ -417,6 +417,7 @@ jobs:
 
       - name: Patch SDL3 pen-input code for Windows XP
         run: |
+          python3 -m unittest discover -s cmake/patches -p 'test_*.py'
           python3 cmake/patches/patch_sdl3_windows_xp.py \
             "$XP_DEPS/fetchcontent/sdl3-src"
 
