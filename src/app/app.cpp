@@ -157,6 +157,8 @@ private:
     void export_save(const fs::path& dst);
     void save_message(std::string text, bool error);
     void set_menu_open(bool open);
+    bool route_input(const SDL_Event& e, bool key);
+    SDL_Scancode menu_key_held_ = SDL_SCANCODE_UNKNOWN;  // F1/Esc press that last opened or closed the menu
     void return_to_launcher();
     void draw_backdrop();
     void begin_card(const char* id, ImVec2 size);
@@ -363,7 +365,7 @@ void App::shutdown() {
 }
 
 void App::load_configured_rom() {
-    std::string path = config_.get_string("rom.path");
+    std::string path = config_.get_file("rom.path");
     if (path.empty()) return;
     VerifiedRom v = verify_rom(utf8_path(path));
     if (v.ok && v.rom.sha1 == config_.get_string("rom.sha1", v.rom.sha1)) {
@@ -380,7 +382,7 @@ void App::accept_rom(const fs::path& path) {
         return;
     }
     rom_error_.clear();
-    config_.set_string("rom.path", path_utf8(v.path));
+    config_.set_file("rom.path", path_utf8(v.path));
     config_.set_string("rom.sha1", v.rom.sha1);
     rom_ = std::move(v);
     game_.reset();
@@ -414,7 +416,7 @@ void App::open_bios_dialog() {
 }
 
 std::optional<std::vector<std::uint8_t>> App::load_bios(std::string* error) {
-    fs::path p = !opt_.bios.empty() ? opt_.bios : utf8_path(config_.get_string("bios.path"));
+    fs::path p = !opt_.bios.empty() ? opt_.bios : utf8_path(config_.get_file("bios.path"));
     if (p.empty()) return std::nullopt;
     std::ifstream f(p, std::ios::binary);
     std::vector<std::uint8_t> bios((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -467,6 +469,7 @@ void App::start_game() {
 // ---- main loop -----------------------------------------------------------------------------
 
 void App::set_menu_open(bool open) {
+    if (open && !options_menu_open()) menu_pad::reset();  // nothing pressed before it acts in it
     options_menu_set_open(open);
 }
 
@@ -502,6 +505,21 @@ bool App::route_event(const SDL_Event& e) {
         return false;
     }
     bool key = e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat;
+    // F1 and Esc toggle the menu once per press. Some Linux input setups deliver a second key-down
+    // without a key-up in between, which closed the menu right after it opened.
+    if ((e.type == SDL_EVENT_KEY_UP && e.key.scancode == menu_key_held_) || e.type == SDL_EVENT_WINDOW_FOCUS_LOST)
+        menu_key_held_ = SDL_SCANCODE_UNKNOWN;
+    if (key && (e.key.key == SDLK_F1 || e.key.key == SDLK_ESCAPE)) {
+        if (e.key.scancode == menu_key_held_) return false;
+        const bool was_open = options_menu_open();
+        const bool consumed = route_input(e, key);
+        if (options_menu_open() != was_open) menu_key_held_ = e.key.scancode;
+        return consumed;
+    }
+    return route_input(e, key);
+}
+
+bool App::route_input(const SDL_Event& e, bool key) {
     if (key && e.key.key == SDLK_F11) {
         bool fs_on = !(SDL_GetWindowFlags(window_) & SDL_WINDOW_FULLSCREEN);
         SDL_SetWindowFullscreen(window_, fs_on);
@@ -1644,7 +1662,7 @@ void App::draw_game_tab(Config& config) {
     draw_save_section();
 
     theme::section("BIOS (optional)");
-    std::string bios = config_.get_string("bios.path");
+    std::string bios = config_.get_file("bios.path");
     if (bios != bios_checked_path_) {  // verify once per change, not every frame
         bios_checked_path_ = bios;
         bios_status_.clear();
@@ -1847,7 +1865,7 @@ int App::run() {
                 picked_state_import_.reset();
             }
             if (picked_bios_) {
-                config_.set_string("bios.path", *picked_bios_);
+                config_.set_file("bios.path", *picked_bios_);
                 std::string err;
                 if (!load_bios(&err)) {
                     config_.erase("bios.path");
@@ -1930,6 +1948,8 @@ int App::run() {
                 ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer_);
                 SDL_SetRenderScale(renderer_, 1, 1);
                 if (!opt_.screenshot.empty() && reached_end) capture_window(opt_.screenshot.string());
+            } else {
+                menu_pad::discard_queued();  // no ImGui frame ran, so nothing else drains its input queue
             }
             SDL_RenderPresent(renderer_);
             std::string msg = controls_->take_message();
