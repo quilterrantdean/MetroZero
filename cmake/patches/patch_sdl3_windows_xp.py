@@ -9,14 +9,14 @@ from pathlib import Path
 def replace_once(root: Path, relative: str, old: str, new: str) -> None:
     path = root / relative
     source = path.read_text(encoding="utf-8")
-    old_count = source.count(old)
+    # The guarded replacement contains the original block. Count originals
+    # outside the replacement, otherwise a cache hit looks like a conflict.
     new_count = source.count(new)
+    old_count = source.replace(new, "").count(old)
+    if old_count == 0 and new_count == 1:
+        return
     if old_count == 1 and new_count == 0:
         path.write_text(source.replace(old, new, 1), encoding="utf-8", newline="\n")
-    elif old_count == 0 and new_count == 1:
-        return
-    elif old_count == 0 and new_count >= 1:
-        return
     else:
         raise SystemExit(
             f"{relative}: expected one original or one patched source block "
@@ -84,26 +84,30 @@ def main() -> int:
     )
     mouse_marker = "    case WM_MOUSEMOVE:\n"
 
-    found_pointer = False
+    starts = []
     for pointer_marker in pointer_markers:
         count = events.count(pointer_marker)
         if count > 1:
             raise SystemExit(f"SDL_windowsevents.c: {pointer_marker.strip()} found more than once")
-        if count != 1:
-            continue
-        found_pointer = True
-        start = events.index(pointer_marker)
-        end = events.find(mouse_marker, start)
-        if end < 0:
-            raise SystemExit("SDL_windowsevents.c: matching WM_MOUSEMOVE boundary not found")
+        if count == 1:
+            starts.append(events.index(pointer_marker))
 
-        block = events[start:end]
-        if win8_guard in block:
-            continue
-        events = events[:start] + win8_guard + block + end_guard + "\n" + events[end:]
-
-    if not found_pointer:
+    if not starts:
         raise SystemExit("SDL_windowsevents.c: no Windows pointer-event case found")
+
+    # All pointer cases precede WM_MOUSEMOVE. Wrap the whole region once,
+    # rather than repeatedly wrapping overlapping suffixes of the region.
+    start = min(starts)
+    end = events.find(mouse_marker, start)
+    if end < 0 or max(starts) >= end:
+        raise SystemExit("SDL_windowsevents.c: matching WM_MOUSEMOVE boundary not found")
+    block = events[start:end]
+    already_guarded = (
+        events[:start].endswith(win8_guard)
+        and block.endswith(end_guard + "\n")
+    )
+    if not already_guarded:
+        events = events[:start] + win8_guard + block + end_guard + "\n" + events[end:]
 
     events_path.write_text(events, encoding="utf-8", newline="\n")
 
